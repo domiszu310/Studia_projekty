@@ -46,6 +46,7 @@ library(grid)
 data(Glass)
 ```
 
+\newpage
 
 # Cel analizy
 
@@ -91,6 +92,7 @@ str(Glass)
 
 Dane `Glass` z pakietu `mlbench` po wczytaniu nie wymagają żadnych modyfikacji. Wszystkie zmienne zostały poprawnie wczytane.
   
+\newpage
   
 ## Informacje o danych
 
@@ -143,7 +145,7 @@ Mamy zatem 6 klas w tym zbiorze danych.
 
 ### Wartości brakujące
 
-```{r glass.na,  fig.cap="\\label{fig:glass.na}Wykres przedstawiający procentowy udział wartości brakujących w danych Glass"}
+```{r glass.na, fig.cap="\\label{fig:glass.na}Wykres przedstawiający procentowy udział wartości brakujących w danych Glass", message=FALSE, warning=FALSE}
 plot_missing(Glass, title = "Procent wartości brakujących w danych Glass")
 ```
   
@@ -177,6 +179,7 @@ błąd <- 1 - dokładność # wszystkie, które są poza 2 klasą wrzucamy do ni
 
 Błąd klasyfikacji, jaki otrzymalibyśmy przypisując wszystkie obiekty do najczęściej występującej klasy (czyli klasy `r najczęstsza`.), wynosi `r round(błąd, 3)`. Wynik ten otrzymujemy, odejmując od $1$ iloraz ilości elementów klasy `r najczęstsza`. i liczby wszystkich obserwacji.
 
+\newpage
 
 ### Standaryzacja
 
@@ -190,6 +193,7 @@ boxplot(Glass, las=3, col=rainbow(9), cex.main = 0.9, cex.axis = 0.7,
 
 Cechy charakteryzują się wyraźną zmiennością (wykres \ref{fig:glass.wariancja}), dlatego zdecydowałyśmy się zastosować standaryzację dla niektórych algorytmów, żeby uniknąć sytuacji, w której zmienna `Si` zdominowałaby pozostałe cechy.
 
+\newpage
 
 ```{r glass.standaryzacja, fig.cap="\\label{fig:glass.standaryzacja}Wykres pudełkowy dla danych Glass po zastosowaniu standaryzacji."}
 glass.ciągłe <- Glass[ , sapply(Glass, is.numeric)]
@@ -337,7 +341,7 @@ knn5 <- knn.glass(uknn.glass, tknn.glass, K)
 
 Teraz, korzystając z funkcji `knn.glass`, wyznaczamy błędy klasyfikacji oraz macierze pomyłek dla zbioru uczącego i testowego dla `r K`-najbliższych sąsiadów.
 
-```{r knn5.pomyłki fig.cap="\\label{fig:knn5.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla 14-u najbliższych sąsiadów."}
+```{r knn5.pomyłki, fig.cap="\\label{fig:knn5.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla 14-u najbliższych sąsiadów."}
 grid.arrange(macierz(knn5[[1]], "uczący", 1)$gtable, macierz(knn5[[3]], "testowy", 1)$gtable, ncol = 2)
 ```
 
@@ -382,7 +386,7 @@ knn.opt <- knn.glass(uknn.glass, tknn.glass, k.opt)
 ```
 
 
-```{r knn.opt.pomyłki fig.cap="\\label{fig:knn.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszej liczby najbliższych sąsiadów."}
+```{r knn.opt.pomyłki, fig.cap="\\label{fig:knn.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszej liczby najbliższych sąsiadów."}
 grid.arrange(macierz(knn.opt[[1]], "uczący", 1)$gtable, macierz(knn.opt[[3]], "testowy", 1)$gtable, ncol = 2)
 ```
 
@@ -597,6 +601,7 @@ Tworzymy funkcję `tree.glass` dla argumentów:
   
 Na podstawie tych argumentów buduje drzewo za pomocą funkcji `rpart` (z biblioteki `rpart`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów lub (w zależności od argumentu `model`) stworzony model drzewa lub (w zależności od argumentu `wykres`) graficzną reprezentację drzewa.
 
+\newpage
 
 ```{r glass.tree.fun, echo=TRUE}
 tree.glass <- function(uczący, testowy, formula = Type ~ .,
@@ -643,6 +648,8 @@ tree.glass <- function(uczący, testowy, formula = Type ~ .,
 
 
 Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+\newpage
 
 ```{r tree.próba}
 tree <- tree.glass(glass.uczący, glass.testowy)
@@ -953,6 +960,8 @@ Na ich postawie wyznaczamy model, wykorzystując funkcję `NaiveBayes` z pakietu
 
 Tworzenie wykresu dla modelu parametrycznego dla danych `Glass` jest niemożliwe, ponieważ dla jednej z klas jedna ze zmiennych przyjmuje stałą wartość równą $0$, z czym funkcja `NaiveBayes` nie jest w stanie sobie poradzić. Dlatego w przypadku modelu parametrycznego korzystamy z funkcji `naiveBayes`, która z kolei zwraca obiekt niemożliwy do przedstawienia na wykresie.
 
+\newpage
+
 
 ```{r bayes.glass.fun, echo=TRUE}
 bayes.glass <- function(uczący, testowy, formula = Type ~ .,
@@ -1004,6 +1013,8 @@ bayes.glass <- function(uczący, testowy, formula = Type ~ .,
 ```
 
 Testujemy funkcję dla wygenerowanego wcześniej zbioru uczącego i testowego. Dzięki temu będziemy w stanie stwierdzić, który model, parametryczny czy nieparametryczny, jest lepszy dla naszego zbioru danych i to na nim będziemy się opierać w dalszej analizie.
+
+\newpage
 
 ### Model parametryczny
 
@@ -1367,7 +1378,7 @@ Teraz, korzystając z funkcji `svm.glass`, wyznaczamy błędy klasyfikacji oraz 
 ### Jądro gaussowskie
 
 ```{r svm.basic}
-svm.basic <- svm.glass(glass.ucz.s, glass.test.s)
+svm.basic <- svm.glass(uknn.glass, tknn.glass)
 ```
 
 ```{r svm.basic.pomyłki, fig.cap="\\label{fig:svm.basic.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass."}
@@ -1396,7 +1407,7 @@ Wyniki dla jądra gaussowskiego dla domyślnych parametrów były już sprawdzan
 
 ```{r svm.lin}
 # jądro liniowe - optymalizujemy C
-svm.lin <- svm.glass(glass.ucz.s, glass.test.s, kernel = "linear")
+svm.lin <- svm.glass(uknn.glass, tknn.glass, kernel = "linear")
 ```
 
 ```{r svm.lin.pomyłki, fig.cap="\\label{fig:svm.lin.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra liniowego."}
@@ -1413,7 +1424,7 @@ Błąd klasyfikacji na zbiorze testowym: `r round(svm.lin[[4]], 3)`.
 
 ```{r svm.poly}
 # optymalizujemy degree i C, gamma też można
-svm.poly <- svm.glass(glass.ucz.s, glass.test.s, kernel = "polynomial")
+svm.poly <- svm.glass(uknn.glass, tknn.glass, kernel = "polynomial")
 ```
 
 ```{r svm.poly.pomyłki, fig.cap="\\label{fig:svm.poly.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra wielomianowego."}
@@ -1430,7 +1441,7 @@ Błąd klasyfikacji na zbiorze testowym: `r round(svm.poly[[4]], 3)`.
 
 ```{r svm.sigma}
 # coś bliżej nieokreślone gamma, C
-svm.sigma <- svm.glass(glass.ucz.s, glass.test.s, kernel = "sigmoid")
+svm.sigma <- svm.glass(uknn.glass, tknn.glass, kernel = "sigmoid")
 ```
 
 ```{r svm.sigma.pomyłki, fig.cap="\\label{fig:svm.sigma.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra sigmoidalnego."}
@@ -1479,7 +1490,7 @@ set.seed(772)
 C.range <- 2^((-8):4)
 g.range <- 2^((-9):4)
 
-radial.tune <- tune(svm, Type ~., data = glass.ucz.s,
+radial.tune <- tune(svm, Type ~., data = uknn.glass,
                     kernel="radial", ranges=list(cost = C.range, gamma = g.range))
 
 c.opt.radial <- radial.tune$best.parameters$cost
@@ -1495,7 +1506,7 @@ plot(radial.tune, main = "Wybór optymalnego parametru kosztu i gamma dla jądra
 Jak widać na wykresie \ref{fig:glass.radial.opt} najmniejszy błąd otrzymujemy dla `C` równego `r c.opt.radial` oraz `gamma` równego `r gamma.opt.radial`. Wyznaczamy teraz macierze pomyłek i błędy klasyfikacji dla tych wartości parametrów.
 
 ```{r svm.radial.opt}
-svm.radial.opt <- svm.glass(glass.ucz.s, glass.test.s, C = c.opt.radial, g = gamma.opt.radial)
+svm.radial.opt <- svm.glass(uknn.glass, tknn.glass, C = c.opt.radial, g = gamma.opt.radial)
 ```
 
 ```{r svm.radial.opt.pomyłki, fig.cap="\\label{fig:svm.radial.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszego C dla jądra gaussowskiego."}
@@ -1520,7 +1531,7 @@ set.seed(772)
 
 C.range <- 2^((-5):5)
 
-linear.tune <- tune(svm, Type ~., data = glass.ucz.s, # dane uczące bez etykietek klas
+linear.tune <- tune(svm, Type ~., data = uknn.glass, # dane uczące bez etykietek klas
                     # train.y = glass.uczący[, "Type"], # tylko etykietki klas w uczącego
                     kernel="linear", ranges=list(cost = C.range))
 
@@ -1537,7 +1548,7 @@ grid()
 Jak widać na wykresie \ref{fig:glass.linear.opt} dla tego jądra najoptymalniejsza wartość parametru `C` wynosi `r c.opt.lin`. Stosujemy dla niej naszą funkcję.
 
 ```{r svm.lin.opt}
-svm.lin.opt <- svm.glass(glass.ucz.s, glass.test.s, kernel = "linear", C = c.opt.lin)
+svm.lin.opt <- svm.glass(uknn.glass, tknn.glass, kernel = "linear", C = c.opt.lin)
 ```
 
 
@@ -1653,7 +1664,8 @@ bag.glass <- function(uczący, testowy, formula = Type ~ .,
                       nbagg = 25, cp = 0.01, minsplit = 20, maxdepth = 30) {
   
   Bag.model <- bagging(formula = formula, data = uczący, nbagg = nbagg,
-                       control = rpart.control(cp = cp, minsplit = minsplit, maxdepth = maxdepth))
+                       control = rpart.control(cp = cp, minsplit = minsplit,
+                                               maxdepth = maxdepth))
   
   # etykietki rzeczywiste
   etykietki.rzecz.t <- testowy$Type
@@ -1681,10 +1693,11 @@ bag.glass <- function(uczący, testowy, formula = Type ~ .,
 ```
 
 
-\newpage
-
 
 Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+\newpage
+
 
 ```{r bag.próba}
 bag.basic <- bag.glass(glass.uczący, glass.testowy)
@@ -1708,7 +1721,7 @@ Błąd klasyfikacji na zbiorze testowym: `r round(bag.basic[[4]], 3)`.
 
 ### Optymalizacja parametrów
 
-Podobnie, jak w przypadku drzewa klasyfikacji chcemy wyznaczyć najoptymalniejsze parametry do konstrukcji drzewa. Jednak *bagging* opiera się na budowaniu wielu drzew, dlatego nie da się tego przeprowadzić w ten sam sposób co ostatnio. Postanowiłyśmy zatem skorzystać z wyliczonych ostatnio najoptymalniejszych parametrów dla pojedynczego drzewa z tabelki \ref{fig:tree.opt.tab}.
+Podobnie, jak w przypadku drzewa klasyfikacji chcemy wyznaczyć najoptymalniejsze parametry do konstrukcji drzewa. Jednak *bagging* opiera się na budowaniu wielu drzew, dlatego nie da się tego przeprowadzić w ten sam sposób co ostatnio. Postanowiłyśmy zatem skorzystać z wyliczonych wcześniej najoptymalniejszych parametrów dla pojedynczego drzewa - parametry najoptymalniejszego drzewa klasyfikacji.
 
 Sprawdzamy teraz wyniki dla tych wartości parametrów.
 
@@ -2089,10 +2102,10 @@ forest.glass <- function(uczący, testowy, formula = Type ~ .,
 ```
 
 
+Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
 \newpage
 
-
-Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
 
 ```{r forest.próba}
 forest.basic <- forest.glass(glass.uczący, glass.testowy)
@@ -2310,9 +2323,9 @@ Co ciekawe, błąd na zbiorze testowym OOB okazał się gorszy jedynie od błęd
 \newpage
 
 
-## Wnioski końcowe
+# Wnioski końcowe
 
-```{r ulubiona.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie najmniejsze błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+```{r ulubiona.ostatnia.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie najmniejsze błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
 modele <- c("Pojedyncze drzewo klasyfikacji", paste("Metoda SVM -", ulubiony.svm), paste("Metoda bagging -", ulubiony.bag), paste("Metoda boosting -", ulubiony.boost), paste("Random forest -", ulubiony.forest))
 error.tabela <- round(c(tree.opt[[4]], ulubiony.svm.error, ulubiony.bag.error, ulubiony.boost.error, ulubiony.forest.error), 3)
 
@@ -2333,12 +2346,12 @@ bad.love.error <- max(error.tabela)
 ```
 
 
-Na podstawie tabelki \ref{fig:ulubiona.ostatnia.tabelka} najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony`. Ten błąd wynosi `r ulubiony.error`. Jest to zatem najlepsza metoda dla danych `Glass`. Można było się tego spodziewać, ponieważ oba podejścia opierają się na wielokrotnym tworzeniu drzew. Dodatkowo zastosowanie metody *bootstrap 632plus* skutecznie zapobiega przeuczeniu modelu, dzięki czemu jest to algorytm wyjątkowo stabilny i bezpieczny.
+Na podstawie tabelki \ref{fig:ulubiona.ostatnia.ostatnia.tabelka} najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony`. Ten błąd wynosi `r ulubiony.error`. Jest to zatem najlepsza metoda dla danych `Glass`. Można było się tego spodziewać, ponieważ oba podejścia opierają się na wielokrotnym tworzeniu drzew. Dodatkowo zastosowanie metody *bootstrap 632plus* skutecznie zapobiega przeuczeniu modelu, dzięki czemu jest to algorytm wyjątkowo stabilny i bezpieczny.
 
 Najgorszy z najlepszych okazał się `r bad.love`, wynoszący `r bad.love.error`.
 
 
-```{r bad.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wybrane, największe błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+```{r bad.ostatnia.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wybrane, największe błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
 modele <- c("Pojedyncze drzewo klasyfikacji", paste("Metoda SVM -", bad.svm), paste("Metoda bagging -", bad.bag), paste("Metoda boosting -", bad.boost), paste("Random forest -", bad.forest))
 error.tabela <- round(c(tree.opt[[4]], bad.svm.error, bad.bag.error, bad.boost.error, bad.forest.error), 3)
 
@@ -2355,6 +2368,6 @@ bad <- modele[which.max(error.tabela)]
 bad.error <- max(error.tabela)
 ```
 
-Porównując błędy z najlepszej opcji w każdej metodzie największy błąd klasyfikacji otrzymujemy, wykorzystując `r bad`. Ten błąd wynosi `r bad.error`. Jest to zatem najgorsza metoda dla danych `Glass`.
+Porównując błędy z najlepszej opcji w każdej metodzie największy błąd klasyfikacji otrzymujemy, wykorzystując `r bad` (tabela \ref{fig:bad.ostatnia.ostatnia.tabelka}). Ten błąd wynosi `r bad.error`. Jest to zatem najgorsza metoda dla danych `Glass`.
 
 
