@@ -1,0 +1,291 @@
+---
+title: "Odkrywanie ukrytych struktur i wizualizacja danych wielowymiarowych"
+subtitle: "Analiza zbioru Titanic metodą MDS"
+author: "Dominika Szulc, Wiktoria Jarząb"
+date: "2025-04-03"
+encoding: UTF-8
+lang: pl
+output:
+  pdf_document:
+      number_sections: true
+      toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.pos = "H", 
+  out.extra = ""
+)
+```
+
+```{r biblioteki, message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)     
+library(titanic)     
+library(cluster)     
+library(MASS)        
+library(VIM)
+library(DataExplorer)
+
+data(titanic_train)
+```
+
+# Cel analizy
+
+W poniższym raporcie zbadamy wielowymiarową strukturę danych dotyczących pasażerów Titanica oraz zidentyfikujemy naturalne skupiska (grupy) pasażerów. Analiza zostanie przeprowadzona w sposób nienadzorowany (bez wykorzystania zmiennej informującej o ich ocaleniu), aby sprawdzić, czy istnieją ukryte wzorce, od których zależało przetrwanie pasażerów.
+
+W tym celu zastosujemy metodę skalowania wielowymiarowego (MDS) do redukcji wymiarowości danych ze zbioru `titanic_train`. Pozwoli to na odwzorowanie wielowymiarowej przestrzeni cech na płaszczyźnie (2D) przy zachowaniu oryginalnych podobieństw (odległości) między pasażerami.
+
+# Dane `titanic_train`
+
+## Przygotowanie danych
+
+```{r titanic.hello}
+titanic <- titanic_train
+# View(titanic)
+str(titanic)
+
+# konwersja
+titanic$Sex <- as.factor(titanic$Sex)
+titanic$Embarked <- as.factor(titanic$Embarked)
+titanic$Survived <- as.factor(titanic$Survived)
+titanic$Survived <- factor(titanic$Survived,
+                                   levels = c("0", "1"),
+                                   labels = c("No", "Yes"))
+titanic$Pclass <- as.factor(titanic$Pclass)
+```
+
+Dane `titanic_train` z pakietu `titanic` po wczytaniu wymagają pewnych modyfikacji - nie wszystkie typy zmiennych są poprawne, dlatego zamieniamy:
+
+  * `Sex` na typ `factor`,
+  * `Survivied` na typ `factor` z nowymi nazwami poziomów:
+  
+    * `Yes` dla $1$,
+    * `No` dla $0$,
+    
+  * `Embarked` na typ `factor`,
+  * `Pclass` na typ `factor`.
+  
+Tak przygotowane dane przypisujemy do zmiennej `titanic`. To na tym zbiorze będziemy wykonywać dalsze operacje.
+  
+  
+## Informacje o danych
+
+Dane `titanic` mają `r dim(titanic)[1]` przypadków i `r dim(titanic)[2]` cech.
+
+```{r titanic.info, echo=FALSE, tab.cap="\\label{fig:titanic.info} Opis danych titanic"}
+typ <- c()
+
+for (i in colnames(titanic)) {
+  if (is.factor(titanic[[i]]) == TRUE) {
+    typ <- c(typ, "jakościowa")
+  } else if (is.character(titanic[[i]]) == TRUE) {
+    typ <- c(typ, "character")
+  } else {
+    typ <- c(typ, "ciągłe")
+  }
+}
+
+opis <- c("ID pasażera",
+          "czy osoba przeżyła katastrofę",
+          "numer klasy: 1, 2, 3",
+          "imię i nazwisko pasażera",
+          "płeć",
+          "wiek",
+          "liczba rodzieństwa lub małżonek/ka na pokładzie",
+          "liczba rodziców lub dzieci na pokładzie",
+          "numer biletu",
+          "opłata za pasażera",
+          "numer kabiny",
+          "port okrętowania")
+
+kable(data.frame(Nazwa_Kolumny = colnames(titanic),
+                 Typ_Danych = typ,
+                 Opis_Danych = opis),
+      col.names = c("Nazwa Kolumny", "Typ Danych", "Opis Danych"),
+      caption = "Opis danych titanic")
+```
+
+
+W tabeli \ref{fig:titanic.info} został przedstawiony opis poszczególnych zmiennych. Widać, że cechy `PassengerID`, `Ticket` oraz `Name` są danymi identyfikacyjnymi, zatem można je usunąć, bo nie będą przydatne w dalszej analizie.
+
+```{r titanic.out}
+# usuwamy kolumnę Cabin, bo ma więcej wartości brakujących niż uzupełnionych
+titanic <- titanic %>%
+  dplyr::select(-PassengerId, -Ticket, -Name)
+```
+
+
+### Wartości brakujące
+
+```{r titanic.na}
+# wartości brakujące
+titanic[titanic == ""] <- NA
+```
+  
+Nie wszystkie braki danych zostały poprawnie wczytane. Niektóre zapisano jako puste wiersze w kolumnie, dlatego zamieniamy je na standardowe kodowanie `NA`.
+
+```{r titanic.NA.plot, fig.cap="\\label{fig:titanic.NA.plot}Wykres przedstawiający procentowy udział wartości brakujących w danych titanic", message=FALSE, warning=TRUE}
+plot_missing(titanic, title = "Procent wartości brakujących w danych")
+```
+
+Po przeanalizowaniu wykresu \ref{fig:titanic.NA.plot} zdecydowałyśmy się na usunięcie danych dotyczących kabiny - `Cabin`.
+
+```{r titanic.out2}
+titanic <- titanic %>%
+  dplyr::select(-Cabin)
+```
+
+Ponadto warto zwrócić uwagę na zmienną `Age`, gdzie również znajduje się dużo wartości brakujących. W tym przypadku zdecydowałyśmy się jednak na zastąpienie ich, stosując metodę k-najbliższych sąsiadów.
+
+```{r titanic.age}
+titanic <- kNN(titanic, variable = c("Age"), k = 5) # k- liczba sąsiadów
+
+# usuwanie dodatkowej kolumny Age_imp
+titanic <- titanic %>%
+  dplyr::select(-ends_with("_imp"))
+```
+
+
+
+\newpage
+
+
+# Redukcja wymiaru na bazie MDS
+
+Zredukujemy teraz wymiar danych `titanic` na bazie MDS, stosując skalowanie metryczne do przestrzeni wymiaru 2.
+
+```{r titanic.mds.dane}
+# pomijamy zmienną Survived
+titanic.mds <- titanic %>%
+  dplyr::select(-Survived)
+
+# wyznaczenie macierzy odmienności
+odmienności <- daisy(titanic.mds, stand=TRUE) # nie ma problemu z NA
+dis.matrix <- as.matrix(odmienności)
+
+# skalowanie metryczne, bo tak
+skalowanie <- cmdscale(dis.matrix, k=2)
+
+dist.mds.euk <- dist(skalowanie, method="euclidean")
+euk.matrix <- as.matrix(dist.mds.euk)
+
+mds.tabela <- as.data.frame(skalowanie)
+colnames(mds.tabela) <- c("Dim1", "Dim2")
+```
+
+
+W ten sposób powstaje zbiór `mds.tabela`, który będziemy wykorzystywać w dalszej analizie.
+
+## Diagram Sheparda
+
+```{r titanic.zestresowany.shepard, fig.cap="\\label{fig:titanic.zestresowany.shepard}Diagram Sheparda z linią idealnego dopasowania"}
+# kryterium STRESS
+dis.original <- dis.matrix
+STRESS <- sqrt(sum((dis.original-euk.matrix)^2)/ sum(dis.original^2))
+
+# diagram Sheparda
+plot(dis.original, euk.matrix, main="Shepard diagram", cex=0.5, xlab="original distance", ylab="distance after MDS mapping", col = "gray")
+abline(coef=c(0,1), col="red", lty=2, lwd=2)
+```
+
+Wartość kryterium STRESS wynosi `r round(STRESS,3)`, zatem odwzorowanie jest słabe, co potwierdza diagram Sheparda (wykres \ref{fig:titanic.zestresowany.shepard}). Zwiększenie wymiaru do przestrzeni trójwymiarowej mogłoby zredukować błąd odwzorowania, jednak w celu zachowania czytelności interpretacji wizualizacji zdecydowałyśmy się jednak kontynuować analizę w przestrzeni 2D.
+
+
+\newpage
+
+
+
+## Wizualizacja
+
+Korzystając z wyznaczonych danych `mds.tabela`, przyjrzymy się przeżyciu pasażerów rejsu. Zbadamy to w zależność od płci oraz klasy pasażerskiej. Otrzymane wyniki porównamy z \href{https://en.wikipedia.org/wiki/Titanic#Survivors_and_victims}{\textcolor{blue}{\underline{oficjalnymi danymi dotyczącymi katastrofy}}}.
+
+### Przeżycie
+
+```{r titanic.survived, fig.cap="\\label{fig:titanic.survived}Wykres przedstawiający przeżycie pasażerów dla danych MDS"}
+# płeć jako identyfikator
+mds.tabela$Survived <- titanic$Survived
+
+ggplot(mds.tabela, aes(x = Dim1, y = Dim2, color = Survived)) +
+  geom_point(size = 3, alpha = 0.4) +
+  theme_minimal() +
+  labs(title = "MDS - pasażerowie Titanica - przeżycie", color = "Survived") +
+  scale_color_manual(values = c("No" = "firebrick", "Yes" = "darkgreen"))
+```
+
+Na wykresie \ref{fig:titanic.survived} mamy dwa skupiska punktów w dużej odległości od siebie. Każda z nich jest podzielona na mniejsze podgrupy. Brak obserwacji odstających. Ponadto mniej więcej połowa pasażerów zginęła w katastrofie. Jest to podobne do oficjalnych danych.
+
+
+#### Płeć
+
+
+```{r titanic.sex, fig.cap="\\label{fig:titanic.sex}Wykres przedstawiający przeżycie pasażerów dla danych MDS w zależności od płci"}
+mds.tabela$Sex <- titanic$Sex
+
+ggplot(mds.tabela, aes(x = Dim1, y = Dim2, shape = Survived, color = Sex)) +
+  geom_point(size = 3, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "MDS - pasażerowie Titanica - przeżycie w zależności od płci", color = "Survived") +
+  scale_shape_manual(values = c("No" = 17, "Yes" = 16)) + 
+  scale_color_manual(values = c("male" = "#789ef1", "female" = "#ff94c3"))
+```
+
+
+Zatem podział na dwa skupiska to podział ze względu na płeć (wykres \ref{fig:titanic.sex}), więc podgrupy to może być podział na klasy albo wiek. Zginęła zdecydowana większość mężczyzn (mniej więcej $75 \%$), co jest zgodne z oficjalnymi danymi.
+
+
+#### Klasa
+
+
+```{r titanic.Pclass, fig.cap="\\label{fig:titanic.Pclass}Wykres przedstawiający przeżycie pasażerów dla danych MDS w zależności od klasy pasażerskiej"}
+mds.tabela$Pclass <- titanic$Pclass
+
+ggplot(mds.tabela, aes(x = Dim1, y = Dim2, shape = Survived, color = Pclass)) +
+  geom_point(size = 3, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "MDS - pasażerowie Titanica - przeżycie w zależności od klasy", color = "Survived") +
+  scale_shape_manual(values = c("No" = 17, "Yes" = 16)) + 
+  scale_color_manual(values = c("1" = "#f97609", "2" = "#12e800", "3" = "#a900e8"))
+```
+
+
+Zatem podgrupy mogą być przybliżeniem podziału na klasy (wykres \ref{fig:titanic.Pclass}). Widać, że zginęli niemal wszyscy mężczyźni podróżujących trzecią klasą. Najwięcej przeżyło kobiet z pierwszej i drugiej klasy. Jest to zgodne z oficjalnymi danymi.
+
+
+\newpage
+
+
+#### Dzieci
+
+
+Sprawdzimy, jaka część podróżujących to dzieci oraz ile z nich zginęło w katastrofie.
+
+```{r titanic.sex2, fig.cap="\\label{fig:titanic.sex2}Wykres przedstawiający przeżycie pasażerów dla danych MDS dla dzieci (Age < 16)"}
+mds.tabela$Sex <- as.character(mds.tabela$Sex)
+mds.tabela$Sex[titanic$Age < 16] <- "child"
+mds.tabela$Sex <- as.factor(mds.tabela$Sex)
+
+ggplot(mds.tabela, aes(x = Dim1, y = Dim2, shape = Survived, color = Sex)) +
+  geom_point(size = 3, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "MDS - pasażerowie Titanica - przeżycie - dzieci", color = "Survived") +
+  scale_shape_manual(values = c("No" = 17, "Yes" = 16)) + 
+  scale_color_manual(values = c("male" = "#789ef1", "female" = "#ff94c3", "child" = "#23ee82"))
+```
+
+Zdecydowana większość dzieci (wykres \ref{fig:titanic.sex2}) podróżowała w trzeciej klasie. Przeżyły praktycznie wszystkie dziewczynki, w przeciwieństwie do chłopców. Śmierć poniosły głównie dzieci z trzeciej klasy. Jest to zgodne z oficjalnymi danymi.
+
+
+# Wnioski
+
+Przeżycie pasażerów Titanica zależało od ich płci oraz klasy, którą podróżowali. 
+
+Większość kobiet przeżyła (wykres \ref{fig:titanic.sex}). Śmierć poniosły głównie pasażerki trzeciej klasy i niektóre z drugiej klasy (wykres \ref{fig:titanic.Pclass}). 
+
+Zginęła zdecydowana większość mężczyzn (wykres \ref{fig:titanic.sex}). Spośród wszystkich klas przeżyli jedynie nieliczni (wykres \ref{fig:titanic.Pclass}).
+
+Wiek nie miał dużego wpływu na przeżycie. Około połowa wszystkich podróżujących dzieci  straciła życie w katastrofie (wykres \ref{fig:titanic.sex2}).
+
