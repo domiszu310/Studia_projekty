@@ -1,0 +1,2360 @@
+---
+title: "Porównanie dokładności klasycznych i zaawansowanych metod klasyfikacji"
+subtitle: "Analiza skuteczności modeli na zbiorze danych Glass"
+author: "Dominika Szulc, Wiktoria Jarząb"
+date: "2025-04-03"
+encoding: UTF-8
+lang: pl
+output:
+  pdf_document:
+      number_sections: true
+      toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.pos = "H", 
+  out.extra = ""
+)
+```
+
+```{r biblioteki, message=FALSE, warning=FALSE, include=FALSE}
+library(kableExtra)
+library(DataExplorer)
+library(dplyr)
+library(mlbench)
+library(class)
+library(ggplot2)
+library(future)
+library(ipred)
+library(rpart)
+library(rpart.plot)
+library(klaR)
+library(e1071)
+library(pheatmap)
+library(randomForest)
+library(adabag)
+library(factoextra)
+library(cluster)
+library(mclust)
+library(clValid)
+library(gridExtra)
+library(grid)
+
+
+data(Glass)
+```
+
+
+# Cel analizy
+
+Celem naszej analizy jest kompleksowe porównanie dokładności algorytmów klasyfikacji na zbiorze danych `Glass`. Badanie ma na celu wyłonienie metody o najmniejszym błędzie klasyfikacji oraz sprawdzenie, czy zastosowanie zaawansowanych metod przynosi poprawę wyników względem klasycznych rozwiązań.
+
+Porównamy następujące grupy algorytmów:
+
+  1. Klasyczne metody klasyfikacji:
+
+    * metoda k-najbliższych sąsiadów (kNN),
+    * drzewa klasyfikacyjne,
+    * naiwny klasyfikator bayesowski.
+    
+  Do modeli z tej grupy zastostujemy dodatkowo zaawansowane schematy oceny dokładności klasyfikacji:
+    
+  * metoda *cross-validation*,
+  * schemat *bootstrap*:
+  
+    * schemat *bootstrap 632plus*.
+    
+  2. Zaawansowane metody klasyfikacji:
+  
+    * metoda wektorów nośnych (SVM) z różnymi funkcjami jądrowymi,
+    * rodziny klasyfikatorów:
+      
+        * metoda *bagging*,
+        * metoda *boosting*,
+        * metoda *random forest*.
+        
+        
+Aby wybrać najlepszy klasyfikator podzielimy dane na zbiór uczący i testowy w proporcji $7:3$. Dla każdego modelu wyznaczymy macierze pomyłek oraz błędy klasyfikacji ($1-$dokładność klasyfikacji). 
+
+Przy formułowaniu wniosków i wyborze najlepszej metody będziemy się kierować błędami na zbiorach testowych. Błędy na zbiorach uczących możemy potraktujemy pomocniczo, ponieważ inforumją one głównie o tym jak dobrze model nauczył się na danych (np. czy nie nastąpiło przeuczenie).
+  
+
+# Dane `Glass`
+
+## Przygotowanie danych
+
+```{r hello.glass}
+str(Glass)
+```
+
+Dane `Glass` z pakietu `mlbench` po wczytaniu nie wymagają żadnych modyfikacji. Wszystkie zmienne zostały poprawnie wczytane.
+  
+  
+## Informacje o danych
+
+Dane mają `r dim(Glass)[1]` przypadków i `r dim(Glass)[2]` cech.
+
+```{r glass.info, tab.cap="\\label{fig:glass.info} Opis danych Glass"}
+typ <- c()
+
+for (i in colnames(Glass)) {
+  if (is.factor(Glass[[i]]) == TRUE) {
+    typ <- c(typ, "jakościowe")
+  } else if (is.character(Glass[[i]]) == TRUE) {
+    typ <- c(typ, "character")
+  } else {
+    typ <- c(typ, "ciągłe")
+  }
+}
+
+opis <- c("współczynnik załamania światła",
+          "zawartość sodu",
+          "zawartość magnezu",
+          "zawartość glinu",
+          "zawartość krzemu",
+          "zawartość potasu",
+          "zawartość wapnia",
+          "zawartość baru",
+          "zawartość żelaza",
+          "typ szkła")
+
+kable(data.frame(Nazwa_Kolumny = colnames(Glass),
+                 Typ_Danych = typ,
+                 Opis_Danych = opis),
+      col.names = c("Nazwa Kolumny", "Typ Danych", "Opis Danych"))
+```
+
+Zmienna `Type` zawiera etykietki klas. Zgodnie z dokumentacją na stronie
+
+\href{https://archive.ics.uci.edu/dataset/42/glass+identification}{\textcolor{blue}{\underline{https://archive.ics.uci.edu/dataset/42/glass+identification}}} są to odpowiednio:
+
+  * 1 - okno budunku (typ float),
+  * 2 - okno budynku (typ non-float),
+  * 3 - okno pojazdu (typ float),
+  * 4 - okno pojazdu (typ non-float) - brak w tym zbiorze danych,
+  * 5 - pojemniki,
+  * 6 - szkło stołowe,
+  * 7 - reflektory.
+  
+Mamy zatem 6 klas w tym zbiorze danych.
+
+
+### Wartości brakujące
+
+```{r glass.na,  fig.cap="\\label{fig:glass.na}Wykres przedstawiający procentowy udział wartości brakujących w danych Glass"}
+plot_missing(Glass, title = "Procent wartości brakujących w danych Glass")
+```
+  
+Brak wartości brakujących.
+
+
+\newpage
+
+
+## Rozkład klas
+
+```{r glass.class, fig.cap="\\label{fig:glass.class}Wykres przedstawiający rozkład klas w zbiorze Glass"}
+ggplot(Glass, aes(x = Type, fill = Type)) + # częstość klas
+  geom_bar() + # fill = "darkolivegreen3"
+  ggtitle("Rozkład klas w zbiorze Glass") +
+  xlab("Typ szkła") +
+  ylab("Liczba przypadków")
+```
+
+Na wykresie \ref{fig:glass.class} widać istotną dysproporcję pomiędzy klasami. W klasie 1. i 2. jest zdecydowanie więcej przypadków niż w pozostałych czterech.
+
+
+```{r glass.błąd}
+etykietki.glass <- levels(Glass$Type)
+
+tabela.t <- table(Glass$Type)
+najczęstsza <- names(which.max(tabela.t)) # najczęściej występująca klasa (czyli 2.)
+dokładność <- sum(Glass$Type == najczęstsza) / nrow(Glass) # liczba elementów najczęstszej klasy
+błąd <- 1 - dokładność # wszystkie, które są poza 2 klasą wrzucamy do niej i dzielimy przez liczbę wszystkich elementów, mamy wtedy tyle źle przyporządkowanych elementów
+```
+
+Błąd klasyfikacji, jaki otrzymalibyśmy przypisując wszystkie obiekty do najczęściej występującej klasy (czyli klasy `r najczęstsza`.), wynosi `r round(błąd, 3)`. Wynik ten otrzymujemy, odejmując od $1$ iloraz ilości elementów klasy `r najczęstsza`. i liczby wszystkich obserwacji.
+
+
+### Standaryzacja
+
+Przyjrzymy się teraz uważniej zmienności (wariancji) poszczególnych cech, co pomoże stwierdzić, czy należy zastosować standaryzację.
+
+```{r glass.wariancja, fig.cap="\\label{fig:glass.wariancja}Wykres pudełkowy pozwalający rozstrzygnąć, czy należy zastosować standaryzację dla danych Glass."}
+boxplot(Glass, las=3, col=rainbow(9), cex.main = 0.9, cex.axis = 0.7,
+        main="Wykres pudełkowy dla danych Glass")
+```
+
+
+Cechy charakteryzują się wyraźną zmiennością (wykres \ref{fig:glass.wariancja}), dlatego zdecydowałyśmy się zastosować standaryzację dla niektórych algorytmów, żeby uniknąć sytuacji, w której zmienna `Si` zdominowałaby pozostałe cechy.
+
+
+```{r glass.standaryzacja, fig.cap="\\label{fig:glass.standaryzacja}Wykres pudełkowy dla danych Glass po zastosowaniu standaryzacji."}
+glass.ciągłe <- Glass[ , sapply(Glass, is.numeric)]
+glass.ciągłe.stand <- scale(glass.ciągłe)
+
+# wykres dla standaryzacji
+boxplot(glass.ciągłe.stand, las=3, col=rainbow(9), cex.main = 0.9, cex.axis = 0.7,
+        main="Dane Glass po zastosowaniu standaryzacji")
+```
+
+Teraz sytuacja wygląda znacznie lepiej (wykres \ref{fig:glass.standaryzacja}), jednak dla niektórych algorytów, których działanie będziemy porównywać w dalszej analizie, może być problematyczne, dlatego narazie będziemy nadal operować na oryginalnym zbiorze danych `Glass`.
+
+
+\newpage
+
+
+### Zmienność
+
+Przyjrzymy się teraz zmienności naszych danych.
+
+```{r glass.zmienność, fig.cap="\\label{fig:glass.zmienność}Wykresy pudełkowe przedstawiające rozkład wartości poszczególnych cech ze względu na zmienną Type."}
+plot_boxplot(Glass, by="Type", ncol = 3) # "rozrzut" składników
+```
+
+
+Niektóre cechy powalają na istotne rozróżnienie przynależności do poszczególnych klas:
+
+  * `Ba` pozwala odróżnić klasę 7 od pozostałych,
+  * `Mg` i `Fe` wyróżniają klasy 1, 2 i 3,
+  * `Mg` pozwala również na rozróżnienie klas 5 i 6 od pozostałych,
+  * `Al`, `Ca`, `K`, `Na`, `RI` oraz `Si` cechują się ustandaryzowaną zmiennością klas.
+    
+  
+## Podział zbioru
+
+Zaczynamy od podziału zbioru `Glass` na zbiór uczący (`glass.uczący`) oraz testowy (`glass.testowy`) w proporcji $7:3$. Dane wybieramy losowo.
+
+```{r glass.podział}
+set.seed(772)  # ustawienie ziarna
+
+p <- 0.7 # procent danych, który będzie w zbiorze uczącym
+n <- nrow(Glass)
+losowe.dane <- sample(1:n, size = round(p * n)) # losowo wybrane dane do zbioru uczącego
+
+glass.uczący <- Glass[losowe.dane, ] # zbiór uczący
+glass.testowy <- Glass[-losowe.dane, ] # zbiór testowy
+```
+
+
+```{r glass.mapy}
+macierz <- function(dane, gatunek = c("uczący", "testowy"), kolor) {
+  kolory <- c("darkorange1", "seagreen3", "steelblue3", "greenyellow", "seagreen3", "darkgoldenrod1", "orangered3", "salmon3")
+  
+  if (gatunek == "uczący") {
+    mapa <- pheatmap(dane, display_numbers = TRUE, 
+            cluster_rows = FALSE, cluster_cols = FALSE, 
+            color = colorRampPalette(c("white", kolory[kolor]))(50),
+            fontsize = 8,
+            main = "Macierz pomyłek na zbiorze uczącym",
+            silent = TRUE)
+  } else {
+    mapa <- pheatmap(dane, display_numbers = TRUE, 
+            cluster_rows = FALSE, cluster_cols = FALSE, 
+            color = colorRampPalette(c("white", kolory[kolor]))(50),
+            fontsize = 8,
+            main = "Macierz pomyłek na zbiorze testowym",
+            silent = TRUE)
+  }
+  
+  return(mapa)
+}
+```
+
+
+\newpage
+
+
+# Klasyczne metody klasyfikacji
+
+## Metoda k-najbliższych sąsiadów
+
+W przypadku metody k-najbliższych sąsiadów zastosowanie standaryzacji jest zalecane, ponieważ algorytm bazuje na odległości między przypadkami, dlatego zmienne o większej skali będą wyraźnie dominować nad tymi o mniejszym zakresie.
+
+```{r glass.knn.stand}
+glass.ciągłe.u <- glass.uczący[ , sapply(glass.uczący, is.numeric)]
+uknn.glass <- as.data.frame(scale(glass.ciągłe.u))
+uknn.glass$Type <- glass.uczący$Type
+
+glass.ciągłe.t <- glass.testowy[ , sapply(glass.testowy, is.numeric)]
+tknn.glass <- as.data.frame(scale(glass.ciągłe.t))
+tknn.glass$Type <- glass.testowy$Type
+
+Glass.s <- as.data.frame(glass.ciągłe.stand)
+Glass.s$Type <- Glass$Type
+```
+
+Do analizy użyjemy zbioru `Glass.s` zawierającego zestandaryzowane zmienne ciągłe z danych `Glass` wraz z kolumną `Type` oraz zestandaryzowanego, wcześniej wylosowanego, zbioru uczącego i testowego.
+
+
+### Analiza
+
+Zaczynamy od stworzenia własnej funkcji `knn.glass` dla argumentów:
+
+  * zbiór uczący,
+  * zbiór testowy,
+  * $k$ - liczba najbliższych sąsiadów,
+  * `formuła` - wybrane cechy (domyślnie wszystkie zmienne z danych `Glass`).
+
+Dla nich funkcja zwraca macierze pomyłek oraz błędy klasyfikacji wyznaczone na podstawie modelu zbudowanego za pomocą funkcji `ipredknn` (z pakietu `ipred`).
+
+
+```{r glass.knn.fun, echo=TRUE}
+knn.glass <- function(uczący, testowy, k,
+                      formula = ipredknn(Type ~ ., data = uczący, k = k)) {
+  model.knn.u <- formula # model podstawowy
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.t <- testowy$Type
+  etykietki.rzecz.u <- uczący$Type
+
+  # etykietki prognozowane - prawdopodobieństwo dla dominującej klasy
+  etykietki.prog.t <- predict(model.knn.u, testowy, type="class") 
+  etykietki.prog.u <- predict(model.knn.u, uczący, type="class")
+
+  # macierz pomyłek - przewidział wiersz, ale rzeczywistości była to kolumna
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+
+  # błąd klasyfikacji
+  n.test.t <- dim(testowy)[1]
+  error.t <- (n.test.t - sum(diag(pomyłki.t))) / n.test.t
+  
+  n.test.u <- dim(uczący)[1]
+  error.u <- (n.test.u - sum(diag(pomyłki.u))) / n.test.u
+  
+  return(list(pomyłki.u, error.u, pomyłki.t, error.t))
+}
+```
+
+
+```{r glass.knn5}
+K <- 14
+knn5 <- knn.glass(uknn.glass, tknn.glass, K)
+```
+
+Teraz, korzystając z funkcji `knn.glass`, wyznaczamy błędy klasyfikacji oraz macierze pomyłek dla zbioru uczącego i testowego dla `r K`-najbliższych sąsiadów.
+
+```{r knn5.pomyłki fig.cap="\\label{fig:knn5.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla 14-u najbliższych sąsiadów."}
+grid.arrange(macierz(knn5[[1]], "uczący", 1)$gtable, macierz(knn5[[3]], "testowy", 1)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(knn5[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(knn5[[4]], 3)`.
+
+
+\newpage
+
+
+### Wpływ liczby sąsiadów na dokładność modelu
+
+Badamy teraz wpływ liczby sąsiadów na dokładność modelu dla naszego zbioru uczącego i testowego.
+
+```{r knn.wykres, fig.cap="\\label{fig:knn.wykres}Wykres pozwalający wybrać najbardziej optymalną liczbą k najbliższych sąsiadów dla wygenerowanych wcześniej zbioru uczącego i testowego. Najoptymalniejsze k zostało zaznaczone kolorem."}
+zakres <- 1:20
+
+wyniki <- sapply(zakres, function(k) {
+  set.seed(772)
+  wynik <- knn.glass(uknn.glass, tknn.glass, k)
+  return(wynik[[4]])
+})
+
+k.opt <- zakres[which.min(wyniki)]
+min.error <- min(wyniki)
+
+plot(zakres, type = "b", wyniki, lwd = 2, # col = "pink",
+     main = "Wpływ liczby sąsiadów na błąd klasyfikacji",
+     xlab="k (liczba sąsiadów)", ylab="błąd klasyfikacji")
+
+# najbardziej optymalne k
+points(k.opt, min.error, col = "darkorange1", pch = 19, cex = 1)
+```
+
+
+Jak widać na wykresie \ref{fig:knn.wykres} pierwsza najoptymalniejsza liczba sąsiadów dla zestandaryzowanych zbiorów uczącego i testowego wynosi `r k.opt`. Stosujemy teraz dla niej naszą funkcję.
+
+
+```{r knn.optymalne, echo=FALSE}
+knn.opt <- knn.glass(uknn.glass, tknn.glass, k.opt)
+```
+
+
+```{r knn.opt.pomyłki fig.cap="\\label{fig:knn.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszej liczby najbliższych sąsiadów."}
+grid.arrange(macierz(knn.opt[[1]], "uczący", 1)$gtable, macierz(knn.opt[[3]], "testowy", 1)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(knn.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(knn.opt[[4]], 3)`.
+
+
+Porównując wyniki z tymi, otrzymanymi dla `r K`-najbliższych sąsiadów widzimy, że 
+`r 
+if (knn5[[2]] > knn.opt[[2]] & knn5[[4]] > knn.opt[[4]]) {
+  paste("model dla najoptymalnejszej liczby sąsiadów jest lepszy - jego błędy na zbiorze uczącym i testowym są mniejsze niż dla", K, "sąsiadów.")
+} else if (knn5[[2]] < knn.opt[[2]] & knn5[[4]] < knn.opt[[4]]) {
+  paste("model dla najoptymalnejszej liczby sąsiadów jest gorszy - jego błędy na zbiorze uczącym i testowym są większe niż dla", K, "sąsiadów.")
+} else if (knn5[[2]] > knn.opt[[2]] & knn5[[4]] < knn.opt[[4]]) {
+  paste("pomimo mniejszego błędu na zbiorze uczącym dla modelu dla najoptymalnejszej liczby sąsiadów, błąd na zbiorze testowym jest większy. Z tego powodu uznajemy, że model dla", K ,"sąsiadów jest lepszy.")
+  } else if (knn5[[2]] < knn.opt[[2]] & knn5[[4]] > knn.opt[[4]]) {
+   paste("pomimo mniejszego błędu na zbiorze uczącym dla modelu dla", K ,"sąsiadów, błąd na zbiorze testowym jest większy. Z tego powodu uznajemy, że model dla najoptymalniejsze liczby sąsiadów jest lepszy.")
+  } else {
+  "wybór liczby sąsiadów nie miał znaczenia. Błędy są takie same."
+  }
+`
+
+
+\newpage
+
+
+### Podzbiór zmiennych o najlepszej i najgorszej zdolności dyskryminacyjnej
+
+Tworzymy teraz dwa nowe modele dla najoptymalniejszej liczby najbliższych sąsiadów. Pierwszy będziemy tworzyć w oparciu o cechy o najlepszej zdolności dyskryminacyjnej (zatem `Ba`, `Fe` i `Mg`, jak widać na wykresie \ref{fig:glass.zmienność}), a drugi w oparciu o cechy o najgorszej zdolności dyskryminacyjnej (`K`, `RI` i `Si`).
+
+
+### Zbiór zmiennych o najlepszej zdolności dyskryminacyjnej
+
+
+```{r knn.love, echo=FALSE}
+knn.love <- knn.glass(uknn.glass, tknn.glass, k.opt, ipredknn(Type ~ Ba + Fe + Mg, data = uknn.glass, k = k.opt))
+```
+
+
+```{r knn.love.pomyłki, fig.cap="\\label{fig:knn.love.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najlepszej zdolności dyskryminacyjnej dla najoptymalniejszej liczby najbliższych sąsiadów."}
+grid.arrange(macierz(knn.love[[1]], "uczący", 1)$gtable, macierz(knn.love[[3]], "testowy", 1)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(knn.love[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(knn.love[[4]], 3)`.
+
+  
+
+### Zbiór zmiennych o najgorszej zdolności dyskryminacyjnej
+
+```{r knn.hate, echo=FALSE}
+knn.hate <- knn.glass(uknn.glass, tknn.glass, k.opt, ipredknn(Type ~ K + RI + Si, data = uknn.glass, k = k.opt))
+```
+
+```{r knn.hate.pomyłki, fig.cap="\\label{fig:knn.hate.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najgorszej zdolności dyskryminacyjnej dla najoptymalniejszej liczby najbliższych sąsiadów."}
+grid.arrange(macierz(knn.hate[[1]], "uczący", 1)$gtable, macierz(knn.hate[[3]], "testowy", 1)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(knn.hate[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(knn.hate[[4]], 3)`.
+  
+
+`r 
+if (knn.love[[2]] > knn.hate[[2]] & knn.love[[4]] > knn.hate[[4]]) {
+  "Co zaskakujące model nauczył się rozróżniać przypadki lepiej, ucząc się na danych o najgorszej zdolności dyskryminacyjnej - wynik jest lepszy, niż w przypadku zmiennych o najlepszej zdolności dyskryminacyjnej."
+} else if (knn.love[[2]] < knn.hate[[2]] & knn.love[[4]] < knn.hate[[4]]) {
+  "Tak jak można było się tego spodziewać, błędy na modelu dla zmiennych o najlepszej zdolności dyskryminacyjnej są mniejsze, niż w przypadku tych o najgorszej zdolności dyskryminacyjnej."
+} else if (knn.love[[2]] > knn.hate[[2]] & knn.love[[4]] < knn.hate[[4]]) {
+  "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest większy, to błąd na zbiorze testowym jest mniejszy. Z tego powodu uznajemy, że model dla zmiennych o najlepszej dyskryminacji jest lepszy."
+  } else if (knn.love[[2]] < knn.hate[[2]] & knn.love[[4]] > knn.hate[[4]]) {
+  "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest mniejszy, to błąd na zbiorze testowym jest większy. Z tego powodu uznajemy, że model dla zmiennych o najgorszej dyskryminacji jest lepszy."
+  } else {
+  "Wybór podzbiorów nie miał znaczenia. Błędy są takie same."
+}
+`
+
+
+\newpage
+
+
+### Zaawansowane schematy oceny dokładności klasyfikacji
+
+Poprzednia najoptymalniejsza wartość `r k.opt`-najbliższych sąsiadów została ustalona dla konkretnego zbioru uczącego i testowego. W przypadku poniższych metod, bazujących na całym zbiorze danych `Glass.s`, musimy wyznaczyć nowe najoptymalniejsze $k$. 
+
+```{r knn.telefon.do.przyjaciela}
+my.ipredknn <- function(formula1, data1, ile.sasiadow) {
+  ipredknn(formula = formula1, data = data1, k = ile.sasiadow) # tak się buduje model
+}
+
+my.predict <- function(model, newdata) {
+  predict(model, newdata = newdata, type = "class") # tak się przewiduje
+}
+
+# robimy to, bo error nie umie sam sobie rzeczy podstawić, więc robimy mu funkcje pomocnicze
+```
+
+
+```{r knn.wykres.c-v, fig.cap="\\label{fig:knn.wykres.c-v}Wykres pozwalający wybrać najbardziej optymalną liczbą k najbliższych sąsiadów, używając metody cross-validation. Najoptymalniejsze k zostało zaznaczone kolorem pomarańczowym."}
+zakres <- 1:20
+wyniki <-  sapply(zakres,
+                  function(k){
+                          set.seed(772)
+                          errorest(Type ~., Glass.s, model = my.ipredknn, predict = my.predict,
+                                   estimator="cv", # walidacja krzyżowa
+                                   est.para = control.errorest(k=10), # 10-co krotna
+                                   ile.sasiadow=k)$error
+                  })
+
+k.opt.new <- zakres[which.min(wyniki)]
+min.error <- min(wyniki)
+
+plot(zakres, type = "b", wyniki, lwd = 2, # col = "pink",
+     main = "Wpływ liczby sąsiadów na błąd klasyfikacji",
+     xlab="k (liczba sąsiadów)", ylab="błąd klasyfikacji")
+
+# najbardziej optymalne k
+points(k.opt.new, min.error, col = "darkorange1", pch = 19, cex = 1)
+```
+
+Nowa optymalna liczba sąsiadów wynosi `r k.opt.new`.
+
+### Metoda *cross-validation* (10-krotna)
+
+Metoda ta polega na wielokrotnym (tutaj 10-krotnym) podziale danych na zbiór uczący i testowy. Dla każdego podziału wyznaczany jest błąd klasyfikacji, a końcowy wynik to średnia wszystkich błędów.
+
+```{r knn.CV}
+knn.CV <- errorest(Type ~., Glass.s, model = my.ipredknn, predict = my.predict,
+         estimator = "cv", est.para = control.errorest(k = 10), ile.sasiadow = k.opt)$error # walidacja krzyżowa
+```
+
+Błąd klasyfikacji metodą *cross-validation* dla danych `Glass.s` wynosi `r round(knn.CV, 3)`.
+
+
+### Schemat *bootstrap* (50-krotny)
+
+Metoda ta polega na wielokrotnym (tutaj 50-krotnym) losowaniu prób (ze zwracaniem) ze zbioru danych `Glass.s` i tworzeniu zbioru uczącego i testowego.
+
+```{r knn.bootstrap}
+knn.bt <- errorest(Type ~., Glass.s, model = my.ipredknn, predict = my.predict, estimator = "boot",
+         est.para = control.errorest(nboot = 50), ile.sasiadow = k.opt)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap* dla danych `Glass.s` wynosi `r round(knn.bt, 3)`.
+
+
+#### Schemat *bootstrap 632plus* (50-krotny)
+
+To odmiana metody *bootstrap*, która pozwala na uniknięcie przeuczenia modelu.
+
+```{r knn.632plus}
+knn.plus <- errorest(Type ~., Glass.s, model = my.ipredknn, predict = my.predict, estimator = "632plus",
+         est.para = control.errorest(nboot = 50), ile.sasiadow = k.opt)$error
+```
+
+Błąd klasyfikacji metodą *632plus* dla danych `Glass.s` wynosi `r round(knn.plus, 3)`.
+
+
+### Wnioski cząstkowe
+
+```{r knn.tabelka, tab.cap="\\label{knn.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wyliczone, błędy klasyfikacji dla metody k-najbliższych sąsiadów."}
+model <- c(paste0(K,"-najbliższych sąsiadów"), paste("Optymalna liczba k sąsiadów -", k.opt), "Zbiór cech o najlepszej zdolności dyskryminacyjnej", "Zbiór cech o najgorszej zdolności dyksryminacyjnej", "Metoda cross-validation", "Schemat bootstrap", "Schemat bootstrap 632plus")
+uczący.tabela <- c(
+  round(c(knn5[[2]], knn.opt[[2]], knn.love[[2]], knn.hate[[2]]), 3),
+        "-", "-", "-")
+testowy.tabela <- round(c(knn5[[4]], knn.opt[[4]], knn.love[[4]], knn.hate[[4]], knn.CV, knn.bt, knn.plus),3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = model,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+ulubiony.knn <- model[which.min(testowy.tabela)]
+ulubiony.knn.error <- min(testowy.tabela)
+
+bad.knn <- model[which.max(testowy.tabela)]
+bad.knn.error <- max(testowy.tabela)
+```
+
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:knn.tabelka}), widzimy, że dla metody k-najbliższych sąsiadów najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony.knn` i wynosi on `r ulubiony.knn.error`. Natomiast największy, wynoszący `r bad.knn`, wykorzystując `r bad.knn.error`.
+
+Zastosowanie zaawansowanych schematów oceny dokładności miało zatem znaczący wpływ na nasz wniosek.
+
+
+\newpage
+
+
+## Drzewa klasyfikacyjne
+
+W przypadku metody drzew klasyfikacyjnych stosowanie standaryzacji nie jest potrzebne, ponieważ działa ona na podstawie podziałów w oparciu o dane cechy (zwykle te, które najlepiej dyskryminują dane w danym węźle) i nie zależy od ich zakresu.
+
+### Analiza
+
+Tworzymy funkcję `tree.glass` dla argumentów:
+  
+  * zbiór uczący,
+  * zbiór testowy,
+  * formuła (domyślnie wszystkie cechy),
+  * parametry tworzące drzewo (`cp`, `minsplit` i `maxdepth` ustawione na wartości domyślne),
+  * `model` (domyślnie `FALSE`) - określa, czy funkcja zwraca stworzony model drzewa,
+  * `wykres` (domyślnie `FALSE`) - określa, czy funkcja zwraca graficzną reprezentację drzewa.
+  
+  
+Na podstawie tych argumentów buduje drzewo za pomocą funkcji `rpart` (z biblioteki `rpart`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów lub (w zależności od argumentu `model`) stworzony model drzewa lub (w zależności od argumentu `wykres`) graficzną reprezentację drzewa.
+
+
+```{r glass.tree.fun, echo=TRUE}
+tree.glass <- function(uczący, testowy, formula = Type ~ .,
+                       cp = 0.01, minsplit = 20, maxdepth = 30,
+                       wykres = FALSE, model = FALSE) {
+  # model <- Type ~ . formuła modelu
+  
+  # budujemy podstawowe drzewo
+  Glass.tree <- rpart(formula, data = uczący, 
+                      control = rpart.control(cp = cp, minsplit = minsplit, 
+                                              maxdepth = maxdepth, model = TRUE))
+  # dzięki model = TRUE model zostanie zapamiętany, co pozwoli zrobić wykres
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.t <- testowy$Type
+  etykietki.rzecz.u <- uczący$Type
+  
+  # prognozy dla zbioru uczącego
+  etykietki.prog.u <- predict(Glass.tree, newdata = uczący, type = "class")
+  
+  # prognozy dla zbioru testowego
+  etykietki.prog.t <- predict(Glass.tree, newdata = testowy, type = "class")
+  
+  # macierz pomyłek (confusion matrix)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  
+  # błąd klasyfikacji (na zbiorze uczącym i testowy)
+  n.u <- nrow(uczący)
+  error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+  
+  n.t <- nrow(testowy)
+  error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+  
+  if (wykres == TRUE) { # jeśli chcemy rysować wykres
+    return(rpart.plot(Glass.tree))
+  } else if (model == TRUE) {
+    return(Glass.tree)
+  } else {
+    return((list(pomyłki.u, error.u, pomyłki.t, error.t)))
+  }
+}
+```
+
+
+Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+```{r tree.próba}
+tree <- tree.glass(glass.uczący, glass.testowy)
+```
+
+```{r tree.pomyłki, fig.cap="\\label{fig:tree.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów modelu drzewa klasyfikacji."}
+grid.arrange(macierz(tree[[1]], "uczący", 2)$gtable, macierz(tree[[3]], "testowy", 2)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(tree[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(tree[[4]], 3)`.
+
+
+\newpage
+
+
+Zwizualizujemy teraz nasz model.
+
+```{r tree.próbka.wykres, fig.cap="\\label{fig:tree.próbka.wykres}Drzewo klasyfikacji na podstawie stworzonego modelu dla domyślnych parametrów cp, minsplit i maxdepth."}
+# podstawowy wykres
+tree.glass(glass.uczący, glass.testowy, wykres = TRUE)
+```
+
+Nie wszystkie klasy są widoczne w liściach drzewa. Może być to spowodowane zbyt małą ilością elementów w tej klasie lub brakiem wyraźnie dyskryminującej cechy.
+
+
+
+### Różne parametry a dokładność klasyfikacji
+
+W praktyce wszystkie trzy parametry, dla których dokładność klasyfikacji będziemy za moment testować, są od siebie zależne. Jednak stworzenie trójwymiarowego wykresu, uwzględniającego je wszystkie, wymagałoby ogromnej mocy obliczeniowej oraz czasu, dlatego zdecydowałyśmy się na ich podział. Najpierw wyznaczymy najoptymalniejsze `cp`, dla domyślnych wartości parameterów `minsplit` oraz `maxdepth`, a następnie wyznaczymy na wspólnym wykresie ich optymalne wartości dla wyliczonego `cp`.
+
+
+\newpage
+
+
+### `cp`
+
+Badamy teraz wpływ wielkości czynnika `cp` (odpowiedzialnego za liczbę gałęzi (podziałów) naszego drzewa) na dokładność klasyfikacji dla domyślnych wartości parameterów `minsplit` oraz `maxdepth`.
+
+```{r tree.best, fig.cap="\\label{fig:tree.best}Wykres pozwalający wybrać najoptymalniejszą wartość parametru cp, zaznaczonym kolorem morskozielonym."}
+set.seed(772)
+model.tree <- tree.glass(glass.uczący, glass.testowy, model = TRUE)
+
+# przerywaną linię
+min_xerror <- min(model.tree$cptable[,"xerror"]) 
+min_xerror_std <- model.tree$cptable[which.min(model.tree$cptable[,"xerror"]), "xstd"]
+przerywana_linia <- min_xerror + min_xerror_std
+
+# wiersze, gdzie xerror <= przerywana_linia
+kandydaci <- model.tree$cptable[model.tree$cptable[,"xerror"] <= przerywana_linia, , drop = FALSE]
+
+# wybieramy najmniejsze drzewo (najmniejszy CP)
+cp.opt <- kandydaci[nrow(kandydaci), "CP"]
+
+# do zaznaczenia punktu na wykresie
+best.index <- which(model.tree$cptable[,"CP"] == cp.opt)
+besterror <- model.tree$cptable[best.index, "xerror"]
+
+plotcp(model.tree)
+points(best.index, besterror, col = "seagreen3", pch = 19, cex = 1)
+```
+
+
+Najoptymalniejsze `cp`, to te, które są na i pod linią przerywaną (minimalny błąd plus odpowiadające mu odchylenie standardowe) na wykresie \ref{fig:tree.best}. Preferowana wartość to ta, dla której dostaniemy najmniejsze drzewo. W naszym przypadku nie jest to jednak najoptymalniejszy błąd (wykonałyśmy testy), dlatego jako najoptymalniejsze `cp` wybieramy to, dla którego błąd jest najmniejszy. Ta wartość to `r cp.opt`.
+
+Teraz, w oparciu o wyliczone `cp`, wyznaczymy macierze pomyłek i błędy klasyfikacji dla zbioru uczącego i testowego.
+
+```{r tree.opt.cp}
+tree.opt.cp <- tree.glass(glass.uczący, glass.testowy, cp = cp.opt)
+```
+
+```{r tree.cp.pomyłki, fig.cap="\\label{fig:tree.cp.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszej wartości parametru cp."}
+grid.arrange(macierz(tree.opt.cp[[1]], "uczący", 2)$gtable, macierz(tree.opt.cp[[3]], "testowy", 2)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(tree.opt.cp[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(tree.opt.cp[[4]], 3)`.
+
+
+\newpage
+
+
+### `minsplit` oraz `maxdepth`
+
+
+```{r minmax.tree.przedział}
+wyniki <- data.frame()
+
+m.split <- 1:20
+m.depth <- 1:30
+```
+
+Dla parametrów `minsplit` (minimalna liczba obserwacji w węźle do rozważenia podziału) oraz `maxdepth` (maksymalna liczba poziomów drzewa) zadajemy przedziały [`r min(m.split)`, `r max(m.split)`] oraz [`r min(m.depth)`, `r max(m.depth)`] odpowiednio i sprawdzamy błąd dla optymalnego `cp`. Wybieramy najmniejsze możliwe wartości dla minimalnego błędu.
+
+
+```{r minmax.tree}
+for (minsplit in m.split) {
+  for (maxdepth in m.depth) {
+    tree.error <- tree.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit, maxdepth = maxdepth)
+    
+    error <- tree.error[[4]]
+    
+    wyniki <- rbind(wyniki, data.frame(minsplit = minsplit,
+                                       maxdepth = maxdepth,
+                                       error = error))
+  }
+}
+
+best <- which.min(wyniki$error)
+minsplit.opt <- wyniki[best, ]$minsplit
+maxdepth.opt <- wyniki[best, ]$maxdepth
+```
+
+
+```{r minmax.tree.wykres, fig.cap="\\label{fig:minmax.tree.wykres}Wykres przedstawiający zmianę wartości błędu klasyfikacji, przy zmianie parametrów minsplit oraz maxdepth."}
+ggplot(wyniki, aes(x = minsplit, y = maxdepth, fill = error)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "seagreen3") +
+  labs(title = "Błąd klasyfikacji w zależności od minsplit i maxdepth")
+```
+
+Jak widać na wykresie \ref{fig:minmax.tree.wykres}, dla optymalnej wartości parametru `cp` najmniejszy błąd otrzymujemy dla `minsplit` równego `r minsplit.opt` oraz `maxdepth` równego `r maxdepth.opt`.
+
+Ponownie wyliczamy macierze pomyłek i błędy klasyfikacji dla wyznaczonych parametrów.
+
+```{r tree.opt}
+tree.opt <- tree.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+```{r tree.opt.pomyłki, fig.cap="\\label{fig:tree.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszych wartości parametrów cp, minsplit i maxdepth."}
+grid.arrange(macierz(tree.opt[[1]], "uczący", 2)$gtable, macierz(tree.opt[[3]], "testowy", 2)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(tree.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(tree.opt[[4]], 3)`.
+  
+  
+\newpage
+  
+  
+Zwizualizujemy jeszcze nasz model dla najoptymalniejszych parametrów.
+  
+```{r tree.opt.próbka.wykres, fig.cap="\\label{fig:tree.opt.próbka.wykres}Drzewo klasyfikacji na podstawie stowrzonego modelu dla najoptymalniejszych parametrów cp, minsplit i maxdepth."}
+tree.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt, wykres = TRUE)
+```
+
+
+Nie wszystkie klasy są widoczne w liściach drzewa. Może być to spowodowane zbyt małą ilością elementów w tej klasie lub brakiem wyraźnie dyskryminującej cechy.
+
+
+\newpage
+
+
+### Dyskryminacja
+
+Testujemy teraz nasz algorytm na modelach opartych o podzbiory zmiennych o najlepszej i najgorszej zdolności dyskryminacyjnej dla najoptymalniejszych parametrów.
+
+### Zbiór zmiennych o najlepszej zdolności dyskryminacyjnej
+
+```{r tree.love, echo=FALSE}
+tree.love <- tree.glass(glass.uczący, glass.testowy, formula = Type ~ Ba + Fe + Mg, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+
+```{r tree.love.pomyłki, fig.cap="\\label{fig:tree.love.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najlepszej zdolności dyskryminacyjnej dla najoptymalniejszych parametrów cp, minsplit oraz maxdepth."}
+grid.arrange(macierz(tree.love[[1]], "uczący", 2)$gtable, macierz(tree.love[[3]], "testowy", 2)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(tree.love[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(tree.love[[4]], 3)`.
+
+
+### Zbiór zmiennych o najgorszej zdolności dyskryminacyjnej
+
+```{r tree.hate, echo=FALSE}
+tree.hate <- tree.glass(glass.uczący, glass.testowy, formula = Type ~ K + RI + Si, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+```{r tree.hate.pomyłki, fig.cap="\\label{fig:tree.hate.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najgorszej zdolności dyskryminacyjnej dla najoptymalniejszych parametrów cp, minsplit oraz maxdepth."}
+grid.arrange(macierz(tree.hate[[1]], "uczący", 2)$gtable, macierz(tree.hate[[3]], "testowy", 2)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(tree.hate[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(tree.hate[[4]], 3)`.
+
+
+`r {
+  if (tree.love[[2]] > tree.hate[[2]] & tree.love[[4]] > tree.hate[[4]]) {
+    "Co zaskakujące model nauczył się rozróżniać przypadki lepiej, ucząc się na danych o najgorszej zdolności dyskryminacyjnej - wynik jest lepszy, niż w przypadku zmiennych o najlepszej zdolności dyskryminacyjnej."
+  } else if (tree.love[[2]] < tree.hate[[2]] & tree.love[[4]] < tree.hate[[4]]) {
+    "Tak jak można było się tego spodziewać błędy na modelu dla zmiennych o najlepszej zdolności dyskryminacyjnej są mniejsze, niż w przypadku tych o najgorszej zdolności dyskryminacyjnej."
+  } else if (tree.love[[2]] > tree.hate[[2]] & tree.love[[4]] < tree.hate[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest większy, to błąd na zbiorze testowym jest mniejszy, dlatego model dla zmiennych o najlepszej dyskryminacji jest lepszy."
+  } else if (tree.love[[2]] < tree.hate[[2]] & tree.love[[4]] > tree.hate[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest mniejszy, to błąd na zbiorze testowym jest większy, dlatego model dla zmiennych o najgorszej dyskryminacji jest lepszy."
+  } else {
+    "Wybór podzbiorów nie miał znaczenia. Błędy są takie same."
+  }
+}`
+
+
+### Zaawansowane schematy oceny dokładności
+
+```{r tree.telefon.do.przyjaciela}
+my.rpart <- function(formula1, data1, cp = 0.01, minsplit = 20, maxdepth = 30) { # tu są jakieś parametry, które można pozmieniać
+  rpart(formula1, data = data1, control = rpart.control(cp = cp, minsplit = minsplit, maxdepth = maxdepth))
+}
+
+my.predict <- function(model, newdata) {
+  predict(model, newdata = newdata, type = "class")
+}
+```
+
+
+### Metoda *cross-validation* (10-krotna)
+
+```{r tree.CV}
+tree.CV <- errorest(Type ~., Glass, model = my.rpart, predict = my.predict,
+         estimator = "cv", est.para = control.errorest(k = 10),
+         cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)$error # walidacja krzyżowa
+```
+
+Błąd klasyfikacji metodą *cross-validation* dla danych `Glass` wynosi `r round(tree.CV, 3)`.
+
+
+### Schemat *bootstrap* (50-krotny)
+
+```{r tree.bootstrap}
+tree.bt <- errorest(Type ~., Glass, model = my.rpart, predict = my.predict,
+         estimator = "boot", est.para = control.errorest(nboot = 50),
+         cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap* dla danych `Glass` wynosi `r round(tree.bt, 3)`.
+
+
+#### Schemat *bootstrap 632plus* (50-krotny)
+
+```{r tree.632plus}
+tree.plus <- errorest(Type ~., Glass, model = my.rpart, predict = my.predict,
+         estimator = "632plus", est.para = control.errorest(nboot = 50),
+         cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)$error
+```
+
+Błąd klasyfikacji metodą *632plus* dla danych `Glass` wynosi `r round(tree.plus, 3)`.
+
+### Wnioski cząstkowe
+
+Tu stwierdzamy, która metoda była najlepsza - jej błąd klasyfikacji był najmniejszy.
+
+```{r tree.tabelka, tab.cap="\\label{tree.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wyliczone, błędy klasyfikacji dla drzew klasyfikacji."}
+model <- c("Model podstawowy - bez modyfikacji", "Optymalne parametry cp, minsplit i maxdepth", "Zbiór cech o najlepszej zdolności dyskryminacyjnej", "Zbiór cech o najgorszej zdolności dyskryminacyjnej", "Metoda cross-validation", "Schemat bootstrap", "Schemat bootstrap 632plus")
+uczący.tabela <- c(round(c(tree[[2]], tree.opt[[2]], tree.love[[2]], tree.hate[[2]]), 3), "-", "-", "-")
+testowy.tabela <- round(c(tree[[4]], tree.opt[[4]], tree.love[[4]], tree.hate[[4]], tree.CV, tree.bt, tree.plus), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = model,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+ulubiony.tree <- model[which.min(testowy.tabela)]
+ulubiony.tree.error <- min(testowy.tabela)
+
+bad.tree <- model[which.max(testowy.tabela)]
+bad.tree.error <- max(testowy.tabela)
+```
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:tree.tabelka}), widzimy, że dla drzew klasyfikacji najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony.tree` i wynosi on `r ulubiony.tree.error`. Natomiast największy, wynoszący `r bad.tree`, wykorzystując `r bad.tree.error`.
+
+Tutaj zastosowanie zaawansowanych schematów oceny dokładności nie miało znaczącego wpływu na nasz wniosek.
+
+
+\newpage
+
+
+## Naiwny klasyfikator bayesowski
+
+Dla metody wykorzystującej naiwny klasyfikator bayesowski standaryzacja również nie jest potrzebna. Algorytm oparty jest na maksymalizacji prawdopodobieństwa warunkowego lub gęstości prawdopodobieństwa (jak w naszym przypadku), a nie na odległości między elementami.
+
+
+### Analiza
+
+Tworzymy funkcję `bayes.glass` dla argumentów:
+
+   * zbiór uczący,
+   * zbiór testowy,
+   * formuła (domyślnie wszystkie zmienne),
+   * parametr `prior` (prawdopodobieństwo prior klas ze zbioru),
+   * `parametryczny` (domyślnie `TRUE`) - określa, czy model ma być parametryczny,
+   * `wykres` (domyślnie `FALSE`) - określa, czy funkcja zwraca wykresy gęstości prawdopodobieństwa poszczególnych cech z danych `Glass`.
+   
+Na ich postawie wyznaczamy model, wykorzystując funkcję `NaiveBayes` z pakietu `klaR` (dla modelu nieparametrycznego) lub funkcję `naiveBayes` z pakietu `e1071` (dla modelu parametrycznego), i zwracamy macierze pomyłek oraz błędy klasyfikacji lub, w przypadku modelu nieparametrycznego, (w zależności od argumentu `wykres`) wykres.
+
+
+Tworzenie wykresu dla modelu parametrycznego dla danych `Glass` jest niemożliwe, ponieważ dla jednej z klas jedna ze zmiennych przyjmuje stałą wartość równą $0$, z czym funkcja `NaiveBayes` nie jest w stanie sobie poradzić. Dlatego w przypadku modelu parametrycznego korzystamy z funkcji `naiveBayes`, która z kolei zwraca obiekt niemożliwy do przedstawienia na wykresie.
+
+
+```{r bayes.glass.fun, echo=TRUE}
+bayes.glass <- function(uczący, testowy, formula = Type ~ .,
+                        p = NULL, parametryczny = TRUE,
+                        wykres = FALSE) {
+  
+  if (parametryczny == TRUE & is.null(p) == FALSE) {
+    stop("Błąd. Nie można zadać prawdopodobieństwa dla modelu parametrycznego.")
+  } else {
+    
+    # model na zbiorze uczącym
+    if (parametryczny == TRUE) { # czyli chcemy model parametryczny
+      model.bayes <- naiveBayes(formula, data = uczący)
+      # prognozowane etykietki na zbiorze uczącym
+      etykietki.prog.u <- predict(model.bayes, newdata = uczący)
+      # prognozowane etykietki na zbiorze testowym
+      etykietki.prog.t <- predict(model.bayes, newdata = testowy)
+      
+    } else {
+      model.bayes <- NaiveBayes(formula, data = uczący, usekernel = TRUE, prior = p)
+      # prognozowane etykietki na zbiorze uczącym
+      etykietki.prog.u <- predict(model.bayes, newdata = uczący)$class
+      # prognozowane etykietki na zbiorze testowym
+      etykietki.prog.t <- predict(model.bayes, newdata = testowy)$class
+    }
+    
+    # etykietki rzeczywiste
+    etykietki.rzecz.t <- testowy$Type
+    etykietki.rzecz.u <- uczący$Type
+    
+    # macierz pomyłek
+    pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+    pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+    
+    # błąd klasyfikacji
+    n.u <- nrow(uczący)
+    error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+    
+    n.t <- nrow(testowy)
+    error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+    
+    if (wykres == TRUE & parametryczny == FALSE) { 
+      return(plot(model.bayes))
+    } else {
+      return(list(pomyłki.u, error.u, pomyłki.t, error.t))
+    }
+  }
+}
+```
+
+Testujemy funkcję dla wygenerowanego wcześniej zbioru uczącego i testowego. Dzięki temu będziemy w stanie stwierdzić, który model, parametryczny czy nieparametryczny, jest lepszy dla naszego zbioru danych i to na nim będziemy się opierać w dalszej analizie.
+
+### Model parametryczny
+
+```{r bayes.glass.param}
+bayes.param <- bayes.glass(glass.uczący, glass.testowy)
+```
+
+```{r bayes.glass.param.pomyłki, fig.cap="\\label{fig:bayes.glass.param.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla modelu parametrycznego dla naiwnego klasyfikatora bayesowskiego."}
+grid.arrange(macierz(bayes.param[[1]], "uczący", 3)$gtable, macierz(bayes.param[[3]], "testowy", 3)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bayes.param[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bayes.param[[4]], 3)`.
+  
+  
+### Model nieparametryczny
+  
+```{r bayes.glass.nie.param, message=FALSE, warning=FALSE}
+bayes.n.param <- bayes.glass(glass.uczący, glass.testowy, parametryczny = FALSE)
+```
+
+```{r bayes.n.param.pomyłki, fig.cap="\\label{fig:bayes.n.param.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla modelu nieparametrycznego dla naiwnego klasyfikatora bayesowskiego."}
+grid.arrange(macierz(bayes.n.param[[1]], "uczący", 3)$gtable, macierz(bayes.n.param[[3]], "testowy", 3)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bayes.n.param[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bayes.n.param[[4]], 3)`.
+
+
+
+`r {
+  if (bayes.param[[2]] < bayes.n.param[[2]] & bayes.param[[4]] < bayes.n.param[[4]]) {
+    "Model parametryczny jest lepszy - jego błędy klasyfikacji na zbiorze uczącym i testowym są mniejsze, niż w przypadku modelu nieparametrycznego."
+  } else if (bayes.param[[2]] > bayes.n.param[[2]] & bayes.param[[4]] > bayes.n.param[[4]]) {
+    "Model nieparametryczny jest lepszy - jego błędy klasyfikacji na zbiorze uczącym i testowym są mniejsze, niż w przypadku modelu parametrycznego."
+  } else if (bayes.param[[2]] < bayes.n.param[[2]] & bayes.param[[4]] > bayes.n.param[[4]]) {
+    "Model nieparametryczny jest lepszy - pomimo tego, że błąd na zbiorze uczącym dla modelu parametrycznego jest mniejszy, to błąd na zbiorze testowym jest większy."
+  } else if (bayes.param[[2]] > bayes.n.param[[2]] & bayes.param[[4]] < bayes.n.param[[4]]) {
+    "model parametryczny jest lepszy - pomimo tego, że błąd na zbiorze uczącym dla modelu parametrycznego jest większy, to błąd na zbiorze testowym jest mniejszy."
+  } else {
+    "Parametryzacja modelu nie ma znaczenia. Błędy są takie same."
+  } 
+}`
+
+
+\newpage
+
+
+### Dyskryminacja
+
+
+```{r bayes.wybor.model.automative}
+which.one <- function() {
+  if ((bayes.param[[2]] < bayes.n.param[[2]] & bayes.param[[4]] < bayes.n.param[[4]]) |
+      (bayes.param[[2]] > bayes.n.param[[2]] & bayes.param[[4]] < bayes.n.param[[4]])) {
+    return("parametryczny")
+  } else if ((bayes.param[[2]] > bayes.n.param[[2]] & bayes.param[[4]] > bayes.n.param[[4]]) |
+             (bayes.param[[2]] < bayes.n.param[[2]] & bayes.param[[4]] > bayes.n.param[[4]])) {
+    return("nieparametryczny")
+  }
+}
+
+model <- function() {
+  if (which.one() == "parametryczny") {
+    return(TRUE)
+  } else if (which.one() == "nieparametryczny") {
+    return(FALSE)
+  }
+}
+```
+
+
+Upewniając się, że wcześniejsze zbiory zmiennych o najlepszej i najgorszej dyskryminacji zostały poprawnie wybrane, przedstawimy teraz wykresy gęstości prawdopodobieństwa, dla poszczególnych cech.
+  
+```{r bayes.glass.wykres1, fig.height=6, message=FALSE, warning=FALSE, fig.cap="\\label{fig:bayes.glass.wykres1}Wykresy gęstości prawdopodobieństwa dla modelu nieparametrycznego na zbiorze uczącym."}
+par(mfrow = c(1,2))
+bayes.glass(glass.uczący, glass.testowy, parametryczny = FALSE, wykres = TRUE)
+```
+
+Jak widać na wykresach \ref{fig:bayes.glass.wykres1} zmienne zostały wcześniej poprawnie wybrane, dlatego przestestujemy teraz nasz algorym dla tych podzbiorów w oparciu o model `r which.one()`.
+
+### Zbiór zmiennych o najlepszej zdolności dyskryminacyjnej
+
+```{r bayes.love, echo=FALSE}
+bayes.love <- bayes.glass(glass.uczący, glass.testowy, formula = Type ~ Ba + Fe + Mg,
+                         parametryczny = model())
+```
+
+```{r bayes.love.pomyłki, fig.cap="\\label{fig:bayes.love.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najlepszej zdolności dyskryminacyjnej dla modelu nieparametrycznego."}
+grid.arrange(macierz(bayes.love[[1]], "uczący", 3)$gtable, macierz(bayes.love[[3]], "testowy", 3)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bayes.love[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bayes.love[[4]], 3)`.
+  
+
+### Zbiór zmiennych o najgorszej zdolności dyskryminacyjnej
+
+```{r bayes.hate, echo=FALSE}
+bayes.hate <- bayes.glass(glass.uczący, glass.testowy, formula = Type ~ K + RI + Si,
+                         parametryczny = model())
+```
+
+```{r bayes.hate.pomyłki, fig.cap="\\label{fig:bayes.hate.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla zmiennych o najgorszej zdolności dyskryminacyjnej dla modelu nieparametrycznego."}
+grid.arrange(macierz(bayes.hate[[1]], "uczący", 3)$gtable, macierz(bayes.hate[[3]], "testowy", 3)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bayes.hate[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bayes.hate[[4]], 3)`.
+
+
+`r {
+  if (bayes.love[[2]] > bayes.hate[[2]] & bayes.love[[4]] > bayes.hate[[4]]) {
+    "Co zaskakujące model nauczył się rozróżniać przypadki lepiej, ucząc się na danych o najgorszej zdolności dyskryminacyjnej - wynik jest lepszy, niż w przypadku zmiennych o najlepszej zdolności dyskryminacyjnej."
+  } else if (bayes.love[[2]] < bayes.hate[[2]] & bayes.love[[4]] < bayes.hate[[4]]) {
+    "Tak jak można było się tego spodziewać, błędy na modelu dla zmiennych o najlepszej zdolności dyskryminacyjnej są mniejsze, niż w przypadku tych o najgorszej zdolności dyskryminacyjnej."
+  } else if (bayes.love[[2]] < bayes.hate[[2]] & bayes.love[[4]] > bayes.hate[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest mniejszy, to błąd na zbiorze testowym jest większy, dlatego model dla zmiennych o najgorszej dyskryminacji jest lepszy."
+  } else if (bayes.love[[2]] > bayes.hate[[2]] & bayes.love[[4]] < bayes.hate[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu dla zmiennych o najlepszej dyskryminacji jest większy, to błąd na zbiorze testowym jest mniejszy, dlatego model dla zmiennych o najlepszej dyskryminacji jest lepszy."
+  } else {
+    "Wybór podzbiorów nie miał znaczenia. Błędy są takie same."
+  }
+}`
+
+
+\newpage
+
+
+### Prawdopodobieństwo występowania klas a dokładność klasyfikacji
+
+Ze względu na nierównomierne rozłożenie przypadków (wykres \ref{fig:glass.class}) postanowiłyśmy sprawdzić, czy ustawienie takiego samego prawdopodobieństwa dla wszystkich klas sprawi, że przypadki będą lepiej klasyfikowane.
+
+```{r bayes.prawdo, message=FALSE, warning=FALSE}
+prawdo <- rep(1/6, 6) # 6 klas, każda z takim samym prawdopodobieństwem
+bayes.prawdo <- bayes.glass(glass.uczący, glass.testowy, parametryczny = FALSE, p = prawdo)
+```
+
+```{r bayes.prawdo.pomyłki, fig.cap="\\label{fig:bayes.prawdo.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla modelu nieparametrycznego i występowaniem klas z jednakowym prawdopodobieństem."}
+grid.arrange(macierz(bayes.prawdo[[1]], "uczący", 3)$gtable, macierz(bayes.prawdo[[3]], "testowy", 3)$gtable, ncol = 2)
+```
+
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bayes.prawdo[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bayes.prawdo[[4]], 3)`.
+
+`r {
+  if (bayes.prawdo[[2]] < bayes.n.param[[2]] & bayes.prawdo[[4]] < bayes.n.param[[4]]) {
+    "Nasze przypuszczenie było słuszne. Dokładność klasyfikacji jest znacznie lepsza, jeśli wszystkie klasy są ustawione na występowanie z tym samym prawdopodobieństwiem. Nie będziemy jednak korzystać z tego faktu w dalszej analizie by zachować ciągłość."
+  } else if (bayes.prawdo[[2]] > bayes.n.param[[2]] & bayes.prawdo[[4]] > bayes.n.param[[4]]) {
+    "Niestety nasze przypuszczenie okazało się błędne. Gdy klasy mają takie samo prawdopodobieństwo występowania, dokładność klasyfikacji jest gorsza."
+  } else if (bayes.prawdo[[2]] < bayes.n.param[[2]] & bayes.prawdo[[4]] > bayes.n.param[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu z jednakowym prawdopodobieństwem wszystkich klas jest mniejszy, to błąd na zbiorze testowym jest większy. Dlatego model bez zmiany prawdopodobieństwa jest lepszy."
+  } else if (bayes.prawdo[[2]] > bayes.n.param[[2]] & bayes.prawdo[[4]] < bayes.n.param[[4]]) {
+    "Pomimo tego, że błąd na zbiorze uczącym dla modelu z jednakowym prawdopodobieństwem wszystkich klas jest większy, to błąd na zbiorze testowym jest mniejszy. Dlatego model bez zmiany prawdopodobieństwa jest gorszy."
+  } else {
+    "Ustawienie jednakowego prawdopodobieństwa występowania wszystkich klas nie wpłynęło w żaden sposób na dokładność klasyfikacji."
+  }
+}`
+
+
+### Zaawansowane schematy oceny dokładności
+
+Dla tych schematów ingerencja w prawdopodobieństwo klas mogłaby nie przynieść oczekiwanych rezultatów (mniejszy błąd klasyfikacji), dlatego postanawiamy je pominąć. Wykorzystujemy model nieparametryczny.
+
+```{r bayes.telefon.do.przyjaciela}
+my.NaiveBayes <- function(formula1, data1) {
+  NaiveBayes(formula1, data = data1, usekernel = TRUE)
+}
+
+my.predict <- function(model, newdata) {
+  factor(predict(model, newdata = newdata)$class, levels = levels(newdata$Type))
+}
+```
+
+
+### Metoda *cross-validation* (10-krotna)
+
+```{r bayes.CV, message=FALSE, warning=FALSE, include=FALSE}
+bayes.CV <- errorest(Type ~., Glass, model = my.NaiveBayes, predict = my.predict,
+         estimator = "cv", est.para = control.errorest(k = 10))$error # walidacja krzyżowa
+```
+
+Błąd klasyfikacji metodą *cross-validation* dla danych `Glass` wynosi `r round(bayes.CV, 3)`.
+
+
+### Schemat *bootstrap* (50-krotny)
+
+```{r bayes.bootstrap, message=FALSE, warning=FALSE, include=FALSE}
+bayes.bt <- errorest(Type ~., Glass, model = my.NaiveBayes, predict = my.predict,
+         estimator = "boot", est.para = control.errorest(nboot = 50))$error
+```
+
+Błąd klasyfikacji metodą *bootstrap* dla danych `Glass` wynosi `r round(bayes.bt, 3)`.
+
+
+#### Schemat *bootstrap 632plus* (50-krotny)
+
+```{r bayes.632plus, message=FALSE, warning=FALSE, include=FALSE}
+bayes.plus <- errorest(Type ~., Glass, model = my.NaiveBayes, predict = my.predict,
+         estimator = "632plus", est.para = control.errorest(nboot = 50))$error
+```
+
+Błąd klasyfikacji metodą *632plus* dla danych `Glass` wynosi `r round(bayes.plus, 3)`.
+
+
+### Wnioski cząstkowe
+
+```{r bayes.tabelka, tab.cap="\\label{bayes.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wyliczone, błędy klasyfikacji dla metody opartej o naiwny klasyfikator bayesowski."}
+model <- c("Model parametryczny", "Model nieparametryczny", "Zbiór cech o najlepszej zdolności dyskryminacyjnej", "Zbiór cech o najgorszej zdolności dyskryminacyjnej", "Jednakowe prawdopodobieństwo klas", "Metoda cross-validation", "Schemat bootstrap", "Schemat bootstrap 632plus")
+
+uczący.tabela <- c(round(c(bayes.param[[2]], bayes.n.param[[2]], bayes.love[[2]], bayes.hate[[2]], bayes.prawdo[[2]]), 3), "-", "-", "-")
+testowy.tabela <- round(c(bayes.param[[4]], bayes.n.param[[4]], bayes.love[[4]], bayes.hate[[4]], bayes.prawdo[[4]], bayes.CV, bayes.bt, bayes.plus), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = model,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+ulubiony.bayes <- model[which.min(testowy.tabela)]
+ulubiony.bayes.error <- min(testowy.tabela)
+
+bad.bayes <- model[which.max(testowy.tabela)]
+bad.bayes.error <- max(testowy.tabela)
+```
+
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:tree.tabelka}), widzimy, że dla metody opartej o naiwny klasyfikator bayesowski najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony.bayes` i wynosi on `r ulubiony.bayes.error`. Natomiast największy, wynoszący `r bad.bayes`, wykorzystując `r bad.bayes.error`.
+
+Tutaj również zastosowanie zaawansowanych schematów oceny dokładności miało znaczący wpływ na nasz wniosek.
+
+
+\newpage
+
+
+## Wnioski końcowe
+
+```{r ulubiona.ostatnia.tabelka, tab.cap="\\label{ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wybrane, najmniejsze błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+modele <- c(paste("Metoda k-najbliższych sąsiadów -", ulubiony.knn), paste("Drzewo klasyfikacji -", ulubiony.tree), paste("Naiwny klasyfikator bayesowski -", ulubiony.bayes))
+error.tabela <- round(c(ulubiony.knn.error, ulubiony.tree.error, ulubiony.bayes.error), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = modele,
+  Błąd_zbiór_testowy = error.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+ulubiony <- modele[which.min(error.tabela)]
+ulubiony.error <- min(error.tabela)
+```
+
+
+Porównując błędy z najlepszej opcji w każdej metodzie najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony`. Ten błąd wynosi `r ulubiony.error`. Jest to zatem najlepsza metoda dla danych `Glass`.
+
+
+```{r bad.ostatnia.tabelka, tab.cap="\\label{ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wybrane, największe błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+modele <- c(paste("Metoda k-najbliższych sąsiadów -", bad.knn), paste("Drzewo klasyfikacji -", bad.tree), paste("Naiwny klasyfikator bayesowski -", bad.bayes))
+error.tabela <- round(c(bad.knn.error, bad.tree.error, bad.bayes.error), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = modele,
+  Błąd_zbiór_testowy = error.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+bad <- modele[which.max(error.tabela)]
+bad.error <- max(error.tabela)
+```
+
+Porównując błędy z najlepszej opcji w każdej metodzie największy błąd klasyfikacji otrzymujemy, wykorzystując `r bad`. Ten błąd wynosi `r bad.error`. Jest to zatem najgorsza metoda dla danych `Glass`. Porównując z nim błąd klasyfikacji obliczony ręcznie - wyznaczony przypisując wszystkie zmienne do najczęściej występującej klasy, wynoszący (`r round(błąd, 3)`) - widzimy, że błąd jest odrobinę lepszy, od najgorszego wyznaczonego błędu.
+
+
+\newpage
+
+
+# Zaawansowane metody klasyfikacji
+
+
+## Metoda wektorów nośnych (SVM)
+
+Metoda SVM szuka granicy (hiperpłaszczyzny dyskryminującej), która najlepiej oddziela klasy, czyli maksymalizuje odległość (margines) między punktami z różnych klas. Algorytm opiera się na odległości, dlatego zastosujemy tu zestandaryzowany, wygenerowany wcześniej, zbiór uczący i testowy.
+
+### Analiza
+
+Tworzymy funkcję `svm.glass` dla argumentów:
+  
+  * zbiór uczący,
+  * zbiór testowy,
+  * formuła (domyślnie wszystkie cechy),
+  * parametr `kernel` określający, jakie jądro stosujemy (domyślnie `radial` - jądro gaussowskie),
+  * parametr `C` (domyślnie 1) - `cost` - tolerancja na błędy,
+  * parametr `g` - `gamma` - parametr zależny od wyboru jądra, wpływa na złożoność modelu,
+  * `model` (domyślnie `FALSE`) - określa, czy funkcja zwraca stworzony model SVM.
+
+Na podstawie tych argumentów buduje model za pomocą funkcji `svm` (z biblioteki `e1071`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów lub (w zależności od argumentu `model`) stworzony model SVM.
+
+
+\newpage
+
+
+```{r glass.svm, echo=TRUE, message=FALSE, warning=FALSE}
+svm.glass <- function(uczący, testowy, formula = Type ~ .,
+                      kernel = "radial", C = 1,
+                      g = if (is.vector(uczący)) 1 else 1 / ncol(uczący),
+                      model = FALSE) {
+
+  model.svm <- svm(formula, uczący, kernel = kernel, cost = C, gamma = g)
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.t <- testowy$Type
+  etykietki.rzecz.u <- uczący$Type
+  
+  # prognozy dla zbioru uczącego
+  etykietki.prog.u <- predict(model.svm, newdata = uczący)
+  
+  # prognozy dla zbioru testowego
+  etykietki.prog.t <- predict(model.svm, newdata = testowy)
+  
+  # macierz pomyłek (confusion matrix)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  
+  
+  # błąd klasyfikacji (na zbiorze uczącym i testowy)
+  n.u <- nrow(uczący)
+  error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+  
+  n.t <- nrow(testowy)
+  error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+  
+  if (model == TRUE) {
+    return(model.svm)
+  } else {
+    return((list(pomyłki.u, error.u, pomyłki.t, error.t)))
+  }
+}
+```
+
+
+Teraz, korzystając z funkcji `svm.glass`, wyznaczamy błędy klasyfikacji oraz macierze pomyłek dla zestandaryzowanego zbioru uczącego i testowego dla domyślnych parametrów.
+
+### Jądro gaussowskie
+
+```{r svm.basic}
+svm.basic <- svm.glass(glass.ucz.s, glass.test.s)
+```
+
+```{r svm.basic.pomyłki, fig.cap="\\label{fig:svm.basic.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass."}
+grid.arrange(macierz(svm.basic[[1]], "uczący", 6)$gtable, macierz(svm.basic[[3]], "testowy", 6)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.basic[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.basic[[4]], 3)`.
+
+
+### Dokładność klasyfikacji a wybór jądra
+
+Metoda SVM daje nam możliwość wyznaczania błędu klasyfikacji w oparciu o różne jądra, które trenują nasz model. Mamy do dyspozycji cztery:
+
+  * jądro gaussowskie (domyślne),
+  * jądro liniowe (`linear`),
+  * jądro wielomianowe (`polynomial`),
+  * jąrdo sigmoidalne.
+  
+Korzystając z `svm.glass` wyznaczymy macierze pomyłek i błędy klasyfikacji dla każdego z nich, a następnie wybierzemy najlepsze jądra do optymalizacji.
+
+Wyniki dla jądra gaussowskiego dla domyślnych parametrów były już sprawdzane wyżej, więc je tutaj pomijamy.
+
+### Jądro liniowe
+
+```{r svm.lin}
+# jądro liniowe - optymalizujemy C
+svm.lin <- svm.glass(glass.ucz.s, glass.test.s, kernel = "linear")
+```
+
+```{r svm.lin.pomyłki, fig.cap="\\label{fig:svm.lin.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra liniowego."}
+
+grid.arrange(macierz(svm.lin[[1]], "uczący", 6)$gtable, macierz(svm.lin[[3]], "testowy", 6)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.lin[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.lin[[4]], 3)`.
+
+
+### Jądro wielomianowe
+
+```{r svm.poly}
+# optymalizujemy degree i C, gamma też można
+svm.poly <- svm.glass(glass.ucz.s, glass.test.s, kernel = "polynomial")
+```
+
+```{r svm.poly.pomyłki, fig.cap="\\label{fig:svm.poly.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra wielomianowego."}
+
+grid.arrange(macierz(svm.poly[[1]], "uczący", 6)$gtable, macierz(svm.poly[[3]], "testowy", 6)$gtable, ncol = 2)
+
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.poly[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.poly[[4]], 3)`.
+
+### Jądro sigmoidalne
+
+```{r svm.sigma}
+# coś bliżej nieokreślone gamma, C
+svm.sigma <- svm.glass(glass.ucz.s, glass.test.s, kernel = "sigmoid")
+```
+
+```{r svm.sigma.pomyłki, fig.cap="\\label{fig:svm.sigma.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji svm.glass dla jądra sigmoidalnego."}
+
+grid.arrange(macierz(svm.sigma[[1]], "uczący", 6)$gtable, macierz(svm.sigma[[3]], "testowy", 6)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.sigma[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.sigma[[4]], 3)`.
+
+
+### Które jądra optymalizować?
+
+```{r svm.kernel.tabelka, tab.cap="\\label{fig:svm.kernel.tabelka}Tabelka pozwalająca porównać wszystkie błędy klasyfikacji dla metody SVM dla różnych jąder z domyślnymi parametrami."}
+Kernel <- c("Gaussowskie", "Liniowe", "Wielomianowe", "Sigmoidalne")
+uczący.tabela <- round(c(svm.basic[[2]], svm.lin[[2]], svm.poly[[2]], svm.sigma[[2]]), 3)
+testowy.tabela <- round(c(svm.basic[[4]], svm.lin[[4]], svm.poly[[4]], svm.sigma[[4]]), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Jądro = Kernel,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+```
+
+
+\newpage
+
+
+Na podstawie tabelki \ref{fig:svm.kernel.tabelka} w dalejszej części zajmiemy się optymalizacją parametrów jedynie dla jądra gaussowskiego i liniowego. Zdecydowałyśmy się na te jądra, ponieważ pierwsze z nich miało najmniejsze błędy na zbiorze uczącym i testowym (`r uczący.tabela[1]` i `r testowy.tabela[1]`). Natomiast błąd jądra liniowego na zbiorze testowym był trochę większy (`r testowy.tabela[2]`), niż w przypadku sigmoidalnego (`r testowy.tabela[4]`), ale sigmoidalne miało większy błąd na zbiorze uczącym (`r uczący.tabela[4]` $>$ `r uczący.tabela[2]`), co może sugerować, że model nie jest w pełni stabilny.
+
+
+
+### Optymalizacja parametrów dla jądra gaussowskiego
+
+W przypadku jądra gaussowskiego możemy optymalizować parametr kosztu `C` i parametr `gamma`. Wybieramy najmniejsze możliwe wartości dla minimalnego błędu. Skorzystamy tu z funckji `tune` (z pakietu `e1071`) pozwalającej na znalezienie najoptymalniejszych parametrów dla zadanej metody.
+
+```{r glass.radial.tune, cache=TRUE}
+set.seed(772)
+
+C.range <- 2^((-8):4)
+g.range <- 2^((-9):4)
+
+radial.tune <- tune(svm, Type ~., data = glass.ucz.s,
+                    kernel="radial", ranges=list(cost = C.range, gamma = g.range))
+
+c.opt.radial <- radial.tune$best.parameters$cost
+gamma.opt.radial <- radial.tune$best.parameters$gamma
+```
+
+```{r glass.radial.opt, fig.cap="\\label{fig:glass.radial.opt}Wykres pozwalający wybrać najoptymalniejszą wartość parametru kosztu oraz gamma dla jądra gaussowskiego dla wygenerowanego wcześniej zestandaryzowanego zbioru uczącego i testowego."}
+# kolor do wyboru
+plot(radial.tune, main = "Wybór optymalnego parametru kosztu i gamma dla jądra gaussowskiego", color.palette = topo.colors, cex.main = 0.7, xlab = "koszt")
+```
+
+
+Jak widać na wykresie \ref{fig:glass.radial.opt} najmniejszy błąd otrzymujemy dla `C` równego `r c.opt.radial` oraz `gamma` równego `r gamma.opt.radial`. Wyznaczamy teraz macierze pomyłek i błędy klasyfikacji dla tych wartości parametrów.
+
+```{r svm.radial.opt}
+svm.radial.opt <- svm.glass(glass.ucz.s, glass.test.s, C = c.opt.radial, g = gamma.opt.radial)
+```
+
+```{r svm.radial.opt.pomyłki, fig.cap="\\label{fig:svm.radial.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszego C dla jądra gaussowskiego."}
+
+grid.arrange(macierz(svm.radial.opt[[3]], "testowy", 6)$gtable, macierz(svm.radial.opt[[3]], "testowy", 6)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.radial.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.radial.opt[[4]], 3)`.
+
+
+\newpage
+
+
+### Optymalizacja parametrów dla jądra liniowego
+
+W przypadku jądra liniowego jedynym parametrem, który będziemy optymalizować, jest parametr kosztu `C`.
+
+```{r glass.linear.tune}
+set.seed(772)
+
+C.range <- 2^((-5):5)
+
+linear.tune <- tune(svm, Type ~., data = glass.ucz.s, # dane uczące bez etykietek klas
+                    # train.y = glass.uczący[, "Type"], # tylko etykietki klas w uczącego
+                    kernel="linear", ranges=list(cost = C.range))
+
+best.error.lin <- linear.tune$best.performance
+c.opt.lin <- linear.tune$best.parameters$cost
+```
+
+```{r glass.linear.opt, fig.cap="\\label{fig:glass.linear.opt}Wykres pozwalający wybrać najoptymalniejszą wartość parametru kosztu dla jądra liniowego dla wygenerowanerowanego wcześniej zestandaryzowanego zbioru uczącego i testowego. Najoptymalniejsze C zostało zaznaczone kolorem złotożółtopomarańczowym."}
+plot(linear.tune, main = "Wybór optymalnego parametru kosztu dla jądra liniowego", xlab = "koszt")
+points(c.opt.lin, best.error.lin, pch = 19, cex = 1, col = "darkgoldenrod1")
+grid()
+```
+
+Jak widać na wykresie \ref{fig:glass.linear.opt} dla tego jądra najoptymalniejsza wartość parametru `C` wynosi `r c.opt.lin`. Stosujemy dla niej naszą funkcję.
+
+```{r svm.lin.opt}
+svm.lin.opt <- svm.glass(glass.ucz.s, glass.test.s, kernel = "linear", C = c.opt.lin)
+```
+
+
+```{r svm.lin.opt.pomyłki, fig.cap="\\label{fig:svm.lin.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla najoptymalniejszego C dla jądra liniowego."}
+
+grid.arrange(macierz(svm.lin.opt[[1]], "uczący", 6)$gtable, macierz(svm.lin.opt[[3]], "testowy", 6)$gtable, ncol = 2)
+
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(svm.lin.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(svm.lin.opt[[4]], 3)`.
+
+
+### Schemat *bootstrap 632plus*
+
+```{r svm.telefon.do.przyjaciela}
+my.svm <- function(formula1, data1, kernel = "radial", cost = 1, gamma = NULL) {
+  if (is.null(gamma)) {
+    x <- model.matrix(formula1, data1)[, -1]
+    gamma <- 1 / ncol(x)
+  }
+  svm(formula1, data = data1, kernel = kernel, cost = cost, gamma = gamma)
+}
+
+my.predict <- function(model, newdata) {
+  predict(model, newdata = newdata)
+}
+```
+
+To odmiana metody *bootstrap*, czyli metody opratej na wielokrotnym losowaniu prób (ze zwracaniem) ze zbioru danych `Glass.s` i tworzeniu zbioru uczącego i testowego. Ta odmiana pozwala pozwala na uniknięcie przeuczenia modelu. Wykonamy to dla dwóch optymalizowanych jąder.
+
+```{r svm.632plus.radial, cache=FALSE}
+svm.plus.radial <- errorest(Type ~., Glass.s, model = my.svm, predict = my.predict,
+         estimator = "632plus", est.para = control.errorest(nboot = 50),
+         kernel = "radial", cost = c.opt.radial, gamma = gamma.opt.radial)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap 632plus* dla danych `Glass.s` dla jądra gaussowskiego wynosi `r round(svm.plus.radial, 3)`.
+
+```{r svm.632plus.lin, cache=FALSE}
+svm.plus.lin <- errorest(Type ~., Glass.s, model = my.svm, predict = my.predict,
+         estimator = "632plus", est.para = control.errorest(nboot = 50),
+         kernel = "linear", cost = c.opt.lin)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap 632plus* dla danych `Glass.s` dla jądra liniowego wynosi `r round(svm.plus.lin, 3)`.
+
+
+\newpage
+
+
+## Wnioski cząstkowe SVM
+
+```{r svm.tabelka, tab.cap="\\label{fig:svm.tabelka}Tabelka pozwalająca porównać błędy klasyfikacji dla metody SVM."}
+metoda <- c("Model podstawowy - domyślne parametry", "Najoptymalniejsze jądro gaussowskie", "Najoptymalniejsze jądro liniowe", "Jądro gaussowskie - schemat bootstrap 632plus", "Jądro liniowe - schemat bootstrap 632plus")
+uczący.tabela <- c(round(c(svm.basic[[2]], svm.radial.opt[[2]], svm.lin.opt[[2]]), 3), "-", "-")
+testowy.tabela <- round(c(svm.basic[[4]], svm.radial.opt[[4]], svm.lin.opt[[4]], svm.plus.radial, svm.plus.lin), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Metoda = metoda,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+# ulubiony i najgorszy
+ulubiony.svm <- metoda[which.min(testowy.tabela)]
+ulubiony.svm.error <- min(testowy.tabela)
+
+bad.svm <- metoda[which.max(testowy.tabela)]
+bad.svm.error <- max(testowy.tabela)
+```
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:svm.tabelka}), widzimy, że dla metody wektorów nośnych (SVM) najlepszy wynik otrzymujemy, wykorzystując `r ulubiony.svm` i wynosi on `r ulubiony.svm.error`. Natomiast największy, wynoszący `r bad.svm.error`, wykorzystując `r bad.svm`.
+
+
+\newpage
+
+
+## Rodziny klasyfikatorów
+
+Tak jak wspominałyśmy, w naszej analizie skupimy na trzech algorytmach rodziny klasyfikatorów. Dla każdego z nich stworzymy funkcję zwracającą macierze pomyłek i błędy klasyfikacji oraz poszukamy najoptymalniejszych parametrów. W każdym przypadku klasyfikatorem bazowym będzie drzewo klasyfikacji, dlatego nie musimy korzystać z zestandarowyzowanej wersji zbioru uczącego i testowego.
+
+
+
+## Metoda *bagging*
+
+Ten algorytm opiera się na generowaniu B-boostarpowych replikacji zbioru uczącego poprzez losowanie ze zwracaniem z oryginalnego zbioru uczącego. Dla każdej takiej replikacji konstruujemy klasyfikator na podstawie klasyfikatora bazowego i na koniec wyznaczamy klasyfikator zagregowany. Ostateczna decyzja podejmowana w oparciu o regułę głosowania większości (klasa równa tej, którą ma najwięcej elementów z danej grupy).
+
+### Analiza
+
+Tworzymy funkcję `bag.glass` dla argumentów:
+  
+  * zbiór uczący,
+  * zbiór testowy,
+  * formuła (domyślnie wszystkie cechy),
+  * parametry tworzące drzewo (`cp`, `minsplit` i `maxdepth` ustawione na wartości domyślne)
+  * `nbagg` - liczba podziałów (drzew).
+  
+  
+Na podstawie tych argumentów buduje model oparty o algorytm *bagging* za pomocą funkcji `bagging` (z biblioteki `ipred`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów.
+
+
+\newpage
+
+
+```{r glass.bagging, echo=TRUE}
+bag.glass <- function(uczący, testowy, formula = Type ~ .,
+                      nbagg = 25, cp = 0.01, minsplit = 20, maxdepth = 30) {
+  
+  Bag.model <- bagging(formula = formula, data = uczący, nbagg = nbagg,
+                       control = rpart.control(cp = cp, minsplit = minsplit, maxdepth = maxdepth))
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.t <- testowy$Type
+  etykietki.rzecz.u <- uczący$Type
+  
+  # prognozy dla zbioru uczącego
+  etykietki.prog.u <- predict(Bag.model, newdata = uczący, type = "class")$class
+  
+  # prognozy dla zbioru testowego
+  etykietki.prog.t <- predict(Bag.model, newdata = testowy, type = "class")$class
+
+  # macierz pomyłek (confusion matrix)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  
+  # błąd klasyfikacji (na zbiorze uczącym i testowy)
+  n.u <- nrow(uczący)
+  error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+  
+  n.t <- nrow(testowy)
+  error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+  
+  return((list(pomyłki.u, error.u, pomyłki.t, error.t)))
+}
+```
+
+
+\newpage
+
+
+Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+```{r bag.próba}
+bag.basic <- bag.glass(glass.uczący, glass.testowy)
+
+```
+
+
+```{r bag.pomyłki, fig.cap="\\label{fig:bag.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji bag.glass."}
+
+grid.arrange(macierz(bag.basic[[1]], "uczący", 4)$gtable, macierz(bag.basic[[3]], "testowy", 4)$gtable, ncol = 2)
+
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bag.basic[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bag.basic[[4]], 3)`.
+
+
+\newpage
+
+
+### Optymalizacja parametrów
+
+Podobnie, jak w przypadku drzewa klasyfikacji chcemy wyznaczyć najoptymalniejsze parametry do konstrukcji drzewa. Jednak *bagging* opiera się na budowaniu wielu drzew, dlatego nie da się tego przeprowadzić w ten sam sposób co ostatnio. Postanowiłyśmy zatem skorzystać z wyliczonych ostatnio najoptymalniejszych parametrów dla pojedynczego drzewa z tabelki \ref{fig:tree.opt.tab}.
+
+Sprawdzamy teraz wyniki dla tych wartości parametrów.
+
+```{r bag.opt.par}
+bag.opt.par <- bag.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+
+```{r bag.opt.par.pomyłki, fig.cap="\\label{fig:bag.opt.par.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla optymalnych parametrów cp, minsplit i maxdepth dla funkcji bag.glass."}
+
+grid.arrange(macierz(bag.opt.par[[1]], "uczący", 4)$gtable, macierz(bag.opt.par[[3]], "testowy", 4)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bag.opt.par[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bag.opt.par[[4]], 3)`.
+
+
+\newpage
+
+
+Teraz dla naszego optymalnego modelu szukamy najoptymalniejszej liczby podziałów `nbagg`.
+
+```{r bag.nbagg, cache = TRUE, fig.cap="\\label{fig:bag.nbagg}Wykres przedstawiający, jak zmienia się błąd klasyfikacji dla algorytmu bagging z użyciem schematu bootstrap 632plus w zależności od liczby podziałów nbagg. Najoptymalniejszą wartość zaznaczono kolorem limonkowym."}
+set.seed(772)
+nbagg.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+
+errors <- sapply(nbagg.vector, function(b) {
+  wyniki <- bag.glass(uczący = glass.uczący, testowy = glass.testowy, nbagg = b)
+  return(wyniki[[4]])
+})
+
+error <- which.min(errors)
+B.opt <- nbagg.vector[error]
+
+plot(nbagg.vector, errors, type = "b",
+     xlab = "nbagg", ylab = "Błąd klasyfikacji",
+     main = "Błąd klasyfikacji na zbiorze testowym vs nbagg")
+points(B.opt, errors[error], col = "greenyellow", pch = 19, cex = 1)
+grid()
+```
+
+
+Nagły wzrost błędu na wykresie \ref{fig:bag.nbagg} może wynikać z przybliżeń algorytmu. Najoptymalniejsza liczba podziałów dla wyznaczonowych wcześniej parametrów wynosi `r B.opt`. Użyjemy teraz naszej funkcji do znalezienia błędów klasyfikacji i macierzy pomyłek.
+
+```{r bag.opt}
+bag.opt <- bag.glass(glass.uczący, glass.testowy, nbagg = B.opt, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+```{r bag.opt.pomyłki, fig.cap="\\label{fig:bag.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla optymalnego modelu i optymalnego nbagg bag.glass."}
+
+grid.arrange(macierz(bag.opt[[1]], "uczący", 4)$gtable, macierz(bag.opt[[3]], "testowy", 4)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(bag.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(bag.opt[[4]], 3)`.
+
+
+### Schemat *boostrap 632plus*
+
+Dla tej metody wybierzemy jej indywidualną najoptymalniejszą liczbę podziałów `nbagg`.
+
+```{r bag.telefon.do.przyjaciela}
+my.bagging <- function(formula, data, nbagg) {
+  bagging(formula, data = data, nbagg = nbagg,
+                 control = rpart.control(cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt))
+}
+
+my.predict.bag <- function(model, newdata) {
+  factor(predict(model, newdata = newdata)$class, levels=levels(newdata$Type))
+}
+```
+
+
+```{r bag.632plus, cache=TRUE}
+bag.plus <- errorest(Type ~., Glass, model = my.bagging, predict = my.predict.bag,
+         estimator = "632plus", est.para = control.errorest(nboot = 50),
+         nbagg = B.opt)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap 632plus* wynosi `r round(bag.plus, 3)`.
+
+
+\newpage
+
+
+## Wnioski cząstkowe *bagging*
+
+```{r bag.tabelka, tab.cap="\\label{fig:bag.tabelka}Tabelka pozwalająca porównać wcześniej wyliczone, błędy klasyfikacji dla algorytmu bagging."}
+metoda <- c("Model podstawowy - domyślne parametry", "Optymalne parametry cp, minsplit i maxdepth", "Optymalne parametry cp, minsplit, maxdepth i nbagg", "Schemat bootstrap 632plus")
+uczący.tabela <- c(round(c(bag.basic[[2]], bag.opt.par[[2]], bag.opt[[2]]), 3), "-")
+testowy.tabela <- round(c(bag.basic[[4]], bag.opt.par[[4]], bag.opt[[4]], bag.plus), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Metoda = metoda,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+# ulubiony i najgorszy
+ulubiony.bag <- metoda[which.min(testowy.tabela)]
+ulubiony.bag.error <- min(testowy.tabela)
+
+bad.bag <- metoda[which.max(testowy.tabela)]
+bad.bag.error <- max(testowy.tabela)
+```
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:bag.tabelka}), widzimy, że dla metody *bagging* najlepszy wynik otrzymujemy, wykorzystując `r ulubiony.bag` i wynosi on `r ulubiony.bag.error`. Natomiast największy, wynoszący `r bad.bag.error`, wykorzystując `r bad.bag`.
+
+\newpage
+
+
+## Metoda *boosting*
+
+Ten algorytm działa podobnie do metody *bagging*, różni ją jednak to, że kolejne klasyfikatory są wyznaczane sekwencyjnie - pierwszy klasyfikator uczy się na oryginalnym zbiorze danych, a każdy kolejny koncentruje się bardziej na tych przypadkach, które zostały źle sklasyfikowane przez poprzedni. Jest to możliwe dzięki wagom, które są przypisane do każdego przypadku ze zbioru uczącego. Po każdej iteracji wagi są zwiększane dla błędnie sklasyfikowanych przypadków i zmniejszane dla tych dobrych.
+
+W naszej analizie wykorzystamy algorytm *AdaBoost*.
+
+### Analiza
+
+Tworzymy funkcję `boost.glass` dla argumentów:
+  
+  * zbiór uczący,
+  * zbiór testowy,
+  * formuła (domyślnie wszystkie cechy),
+  * parametry tworzące drzewo (`cp`, `minsplit` i `maxdepth` ustawione na wartości domyślne)
+  * `mfinal` - liczba iteracji/stworzonych drzew.
+  
+  
+Na podstawie tych argumentów buduje model oparty o algorytm *AdaBoost* za pomocą funkcji `boosting` (z biblioteki `adabag`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów, prognozując w oparciu o funkcję `predict.boosting`.
+
+```{r glass.boosting, echo=TRUE}
+boost.glass <- function(uczący, testowy, formula = Type ~ .,
+                        cp = 0.01, minsplit = 20, maxdepth = 30, mfinal = 100) {
+  
+  Boost.model <- boosting(formula = formula, data = uczący, mfinal = mfinal,
+                       control = rpart.control(cp = cp, minsplit = minsplit, maxdepth = maxdepth))
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.t <- testowy$Type
+  etykietki.rzecz.u <- uczący$Type
+  
+  # prognozy dla zbioru uczącego
+  etykietki.prog.u <- predict.boosting(Boost.model, newdata = uczący)$class
+  
+  # prognozy dla zbioru testowego
+  etykietki.prog.t <- predict(Boost.model, newdata = testowy)$class
+  
+  # macierz pomyłek (confusion matrix)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  
+  # błąd klasyfikacji (na zbiorze uczącym i testowy)
+  n.u <- nrow(uczący)
+  error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+  
+  n.t <- nrow(testowy)
+  error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+  
+  return((list(pomyłki.u, error.u, pomyłki.t, error.t)))
+}
+```
+
+Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+```{r boost.próba}
+boost.basic <- boost.glass(glass.uczący, glass.testowy)
+```
+
+
+```{r boost.pomyłki, fig.cap="\\label{fig:boost.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji boost.glass."}
+
+grid.arrange(macierz(boost.basic[[1]], "uczący", 7)$gtable, macierz(boost.basic[[3]], "testowy", 7)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(boost.basic[[2]], 3)`.
+
+Musimy być ostrożne, ponieważ błąd klasyfikacji na zbiorze uczącym jest równy $0$ - istnieje  ryzyko przeuczenia modelu, co może prowadzić do zbyt optymistycznej oceny jego skuteczności.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(boost.basic[[4]], 3)`.
+
+
+\newpage
+
+
+### Optymalizacja parametrów
+
+Podobnie, jak w przypadku metody *bagging* skorzystamy z najoptymalniejszych parametrów dla pojedynczego drzewa z tabelki \ref{fig:tree.opt.tab}.
+
+Sprawdzamy teraz wyniki dla tych wartości parametrów.
+
+```{r boost.opt.par}
+boost.opt.par <- boost.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt)
+```
+
+
+```{r boost.opt.par.pomyłki, fig.cap="\\label{fig:boost.opt.par.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla optymalnych parametrów cp, minsplit i maxdepth dla funkcji boost.glass."}
+
+grid.arrange(macierz(boost.opt.par[[1]], "uczący", 7)$gtable, macierz(boost.opt.par[[3]], "testowy", 7)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(boost.opt.par[[2]], 3)`.
+
+**Uwaga!** Ryzyko przeuczenia.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(boost.opt.par[[4]], 3)`.
+
+
+\newpage
+
+
+Teraz dla naszego optymalnego modelu szukamy najoptymalniejszej liczby itrecji `mfinal`.
+
+
+```{r boost.mfinal, fig.cap="\\label{fig:boost.mfinal}Wykres przedstawiający, jak zmienia się błąd klasyfikacji na zbiorze testowym dla naszego optymalnego modelu dla algorytmu boosting w zależności od liczby iteracji mfinal. Najoptymalniejszą wartość zaznaczono kolorem ceglastoczerwonym."}
+set.seed(772)
+mfinals <- seq(10, 150, 10)
+errors <- numeric(length(mfinals))
+
+# iteracyjnie wyliczamy błąd na zbiorze testowym
+for (i in seq_along(mfinals)) {
+  m <- mfinals[i]
+  errors[i] <- boost.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt, mfinal = m)[[4]]
+}
+
+error <- min(errors)
+mfinal.opt <- mfinals[which.min(errors)]
+
+plot(mfinals, errors, type = "b", xlab = "Liczba iteracji - mfinal", ylab = "Błąd klasyfikacji",
+     main = "Liczba iteracji vs błąd klasyfikacji na zbiore testowym")
+points(mfinal.opt, error, col = "orangered3", pch = 19, cex = 1)
+grid()
+```
+
+Najoptymalniejsza liczba iteracji dla wyznaczonowych wcześniej parametrów na naszym zbiorze testowym wynosi `r mfinal.opt`. Użyjemy teraz naszej funkcji do znalezienia błędów klasyfikacji i macierzy pomyłek.
+
+```{r boost.opt}
+boost.opt <- boost.glass(glass.uczący, glass.testowy, cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt, mfinal = mfinal.opt)
+```
+
+```{r boost.opt.pomyłki, fig.cap="\\label{fig:boost.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla optymalnych parametrów cp, minsplit i maxdepth oraz mfinal dla funkcji boost.glass."}
+
+grid.arrange(macierz(boost.opt[[1]], "uczący", 7)$gtable, macierz(boost.opt[[3]], "testowy", 7)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(boost.opt[[2]], 3)`.
+
+**Uwaga!** Ryzyko przeuczenia.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(boost.opt[[4]], 3)`.
+
+
+### Schemat *boostrap 632plus*
+
+```{r boost.telefon.do.przyjaciela}
+my.boosting <- function(formula, data, mfinal) {
+  boosting(formula, data = data, mfinal = mfinal,
+                 control = rpart.control(cp = cp.opt, minsplit = minsplit.opt, maxdepth = maxdepth.opt))
+}
+
+my.predict.boost <- function(model, newdata) {
+  factor(predict.boosting(model, newdata = newdata)$class, levels = levels(newdata$Type))
+}
+```
+
+```{r boost.632plus, cache=TRUE}
+boost.plus <- errorest(Type ~., Glass, model = my.boosting, predict = my.predict.boost,
+         estimator = "632plus", est.para = control.errorest(nboot = 50),
+         mfinal = mfinal.opt)$error
+```
+
+Błąd klasyfikacji metodą *bootstrap 632plus* wynosi `r round(boost.plus, 3)`.
+
+
+\newpage
+
+
+## Wnioski cząstkowe *boosting*
+
+```{r boost.tabelka, tab.cap="\\label{fig:boost.tabelka}Tabelka pozwalająca porównać błędy klasyfikacji dla algorytmu boosting."}
+metoda <- c("Model podstawowy - domyślne parametry", "Optymalne parametry cp, minsplit i maxdepth", "Optymalne parametry cp, minsplit, maxdepth i mfinal", "Schemat bootstrap 632plus")
+uczący.tabela <- c(round(c(boost.basic[[2]], boost.opt.par[[2]], boost.opt[[2]]), 3), "-")
+testowy.tabela <- round(c(boost.basic[[4]], boost.opt.par[[4]], boost.opt[[4]], boost.plus), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Metoda = metoda,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+# ulubiony i najgorszy
+ulubiony.boost <- metoda[which.min(testowy.tabela)]
+ulubiony.boost.error <- min(testowy.tabela)
+
+bad.boost <- metoda[which.max(testowy.tabela)]
+bad.boost.error <- max(testowy.tabela)
+```
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:boost.tabelka}), widzimy, że dla algorytmu *boosting* (*Adaboost*) najlepszy wynik otrzymujemy, wykorzystując `r ulubiony.boost` i wynosi on `r ulubiony.boost.error`. Natomiast największy, wynoszący `r bad.boost.error`, wykorzystując `r bad.boost`.
+
+
+\newpage
+
+
+## Metoda *random forest*
+
+Algorytm polega na tworzeniu zbioru wielu drzew, a następnie trenowaniu każdego drzewa na innej boostrapowej próbce danych (wybieranej losowo). Ostateczna predykcja powstaje w opraciu o głosowanie większości.
+
+### Analiza
+
+Tworzymy funkcję `forest.glass` dla argumentów:
+  
+  * zbiór uczący,
+  * zbiór testowy (domyślnie `NULL`),
+  * formuła (domyślnie wszystkie cechy),
+  * `ntree` - liczba drzew,
+  * `mtry` - liczba wybieranych losowo cech,
+  * `ranking` (domyślnie `FALSE`) - określa, czy funkcja zwraca wykres przedstawiający ranking ważności cech,
+  * `OOB` (domyślnie `FALSE`) - określa, czy funkcja zwraca macierz pomyłek i błąd klasyfikacji na bazie OOB (Out-Of-Bag) oraz wykres błędu klasyfikacji OBB (ogólny oraz dla każdej klasy osobno) w zależności od liczby drzew.
+
+  
+Na podstawie tych argumentów buduje model oparty o algorytm *random forest* za pomocą funkcji `randomForest` (z biblioteki `randomForest`), a następnie zwraca macierze pomyłek oraz błędy klasyfikacji dla zadanych zbiorów lub (w zależności od argumentu `ranking`) wykres przedstawiający ranking ważności cech lub (w zależności od argumentu `OOB`) macierz pomyłek oraz wykres błędu klasyfikacji na bazie OOB.
+
+
+\newpage
+
+
+```{r glass.forest, echo=TRUE}
+forest.glass <- function(uczący, testowy, formula = Type ~ .,
+                         n = 500, m = floor(sqrt(ncol(uczący) - 1)),
+                         model = FALSE, ranking = FALSE, OOB = FALSE){
+  
+  Glass.forest <- randomForest(formula, data = uczący, ntree = n, mtry = m, importance = TRUE)
+  
+  # etykietki rzeczywiste
+  etykietki.rzecz.u <- uczący$Type
+  
+  # prognozy dla zbioru uczącego
+  etykietki.prog.u <- predict(Glass.forest, newdata = uczący, type = "class")
+  
+  # macierz pomyłek (confusion matrix)
+  pomyłki.u <- table(etykietki.prog.u, etykietki.rzecz.u)
+  
+  # błąd klasyfikacji (na zbiorze uczącym)
+  n.u <- nrow(uczący)
+  error.u <- (n.u - sum(diag(pomyłki.u))) / n.u
+  
+  etykietki.rzecz.t <- testowy$Type
+  
+  # prognozy dla zbioru testowego
+  etykietki.prog.t <- predict(Glass.forest, newdata = testowy, type = "class")
+  pomyłki.t <- table(etykietki.prog.t, etykietki.rzecz.t)
+  n.t <- nrow(testowy)
+  error.t <- (n.t - sum(diag(pomyłki.t))) / n.t
+  
+  if (ranking == TRUE) {
+    varImpPlot(Glass.forest, main = "Ranking ważności cech")
+  } else if (OOB == TRUE) {
+    plot(Glass.forest, main = "Błąd klasyfikacji (OOB)")
+    oob <- Glass.forest$confusion
+    oob.error <- Glass.forest$err.rate[n, "OOB"]
+    return(list(oob, oob.error))
+  } else if (model == TRUE) {
+    return(Glass.forest)
+  } else {
+    return((list(pomyłki.u, error.u, pomyłki.t, error.t)))
+  }
+}
+```
+
+
+\newpage
+
+
+Testujemy teraz naszą funkcję na wygenerowanym wcześniej zbiorze uczącym i testowym.
+
+```{r forest.próba}
+forest.basic <- forest.glass(glass.uczący, glass.testowy)
+```
+
+
+```{r forest.pomyłki, fig.cap="\\label{fig:forest.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla domyślnych parametrów funkcji forest.glass."}
+
+grid.arrange(macierz(forest.basic[[1]], "uczący", 8)$gtable, macierz(forest.basic[[3]], "testowy", 8)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(forest.basic[[2]], 3)`.
+
+**Uwaga!** Ryzyko przeuczenia.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(forest.basic[[4]], 3)`.
+
+
+\newpage
+
+
+### Optymalizacja parametrów
+
+W przypadku metody random forest możemy optymalizować parametry `mtry` oraz `ntree`.
+
+```{r forest.opt.random, fig.cap="\\label{fig:forest.opt.random}Wykres przedstawiający zmianę wartości błędu klasyfikacji, przy zmianie parametrów mtry oraz ntree."}
+set.seed(772)
+
+ntree.v <- c(100, 200, 300, 500, 600)
+mtry.v <- 1:(ncol(glass.uczący) - 1)
+
+wyniki <- data.frame(ntree = integer(), mtry = integer(), error = numeric())
+
+for (n in ntree.v) {
+  for (m in mtry.v) {
+    wynik <- forest.glass(glass.uczący, glass.testowy, n = n, m = m)
+    error <- wynik[[4]]
+    wyniki <- rbind(wyniki, data.frame(ntree = n, mtry = m, error = error))
+  }
+}
+
+ggplot(wyniki, aes(x = factor(mtry), y = factor(ntree), fill = error)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "salmon3") +
+  labs(title = "Błąd klasyfikacji w zależności od mtry i ntree",
+       x = "mtry",
+       y = "ntree")
+
+best <- which.min(wyniki$error)
+ntree.opt <- wyniki[best, ]$ntree
+mtry.opt <- wyniki[best, ]$mtry
+```
+
+
+Jak widać na wykresie \ref{fig:forest.opt.random}, dla naszego zbioru uczącego i testowego najmniejszy błąd otrzymujemy dla `mtry` równego `r mtry.opt` oraz `ntree` równego `r ntree.opt`.
+
+
+\newpage
+
+
+Sprawdzamy teraz wyniki dla tych wartości parametrów.
+
+```{r forest.opt}
+forest.opt <- forest.glass(glass.uczący, glass.testowy, n = ntree.opt, m = mtry.opt)
+```
+
+
+```{r forest.opt.pomyłki, fig.cap="\\label{fig:forest.opt.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla optymalnych parametrów mtry oraz ntree dla funkcji forest.glass."}
+
+grid.arrange(macierz(forest.opt[[1]], "uczący", 8)$gtable, macierz(forest.opt[[3]], "testowy", 8)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(forest.opt[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(forest.opt[[4]], 3)`.
+
+
+\newpage
+
+
+### Obserwacje Out-of-Bag (OOB)
+
+Obserwacje OOB to obserwacje, które nie były wybrane do zbioru uczącego w danej replikacji podczas tworzenia drzewa w algorytmie. Pełnią rolę wewnętrzego zbioru testowego, co pozwala na wyznaczenie błędu klasyfikacji bez tworzenia zewnętrzego zbioru.
+
+Zatem dla naszego modelu z optymalnymi parametrami wyznaczymy macierz pomyłek oraz wykres błądu klasyfikacji w zależności od liczby drzew.
+
+```{r forest.oob.wykres, fig.cap="\\label{fig:forest.oob.wykres}Wykres przedstawiający błąd klasyfikacji na zbiorze testowym OOB w zależności od liczby drzew. Czarną linią zaznaczono ogólny błąd dla naszego optymalnego modelu random forest, natomiast kolorowymi dla błędy poszczególnych klas."}
+forest.oob <- forest.glass(glass.uczący, glass.testowy, n = ntree.opt, m = mtry.opt, OOB = TRUE)
+```
+
+Na podstawie wykresu \ref{fig:forest.oob.wykres} widać, że im więcej drzew ma nasz model, tym ogólny błąd na zbiorze testowym OOB (ciągła czarna linia) jest stabilniejszy i ma tendencję malejącą. W przypadku błędów dla poszczególnych klas (kolorowe linie i przerywana czarna) dla większości z nich mamy zależność, że im więcej drzew, tym stabilniejszy błąd. 
+
+
+\newpage
+
+
+```{r forest.oob.error, tab.cap="\\label{fig:forest.oob.error}Tabelka przedstawiająca błędy klasyfikacji dla poszczególnych klas dla zbioru testowego OOB."}
+macierz.oob <- as.matrix(forest.oob[[1]])
+
+error.oob.class <- macierz.oob[, "class.error"]
+error.oob <- forest.oob[[2]]
+
+tabelka.oob <- data.frame(Ostateczny_błąd = error.oob.class)
+
+kable(tabelka.oob)
+```
+
+Ostateczny ogólny błąd klasyfikacji na zbiorze testowym OOB: `r round(error.oob, 3)`. 
+
+```{r forest.oob, fig.cap="\\label{fig:forest.oob}Macierz pomyłek na zbiorze testowym OOB dla naszego optymalnego modelu."}
+forest.oob.m <- macierz.oob[, -7]
+macierz(forest.oob.m, "testowy", 8)
+```
+
+
+\newpage
+
+
+### Ranking ważności cech
+
+Przyjrzymy się teraz rankingowi ważności cech na wygenerowanym zbiorze uczącym dla optymalnego modelu.
+
+```{r forest.ranking.opt, fig.cap="\\label{fig:forest.ranking.opt}Wykres przedstawiający ranking ważności cech w wygenerowanym zbiorze uczącym dla optymalnego modelu."}
+forest.glass(glass.uczący, glass.testowy, n = ntree.opt, m = mtry.opt, ranking = TRUE)
+```
+
+Wykres \ref{fig:forest.ranking.opt} bazuje na dwóch miarach ważności cech:
+
+  * `MeanDecreaseAccuracy` - miara globalnego wpływu cech na poprawność predykcji mierzona na bazie obserwacji OOB - jak bardzo dokładność spada po losowej permutacji wartości danej cechy.
+  * `MeanDecreaseGini` - miara czystości podziału - jak bardzo dana cecha pomaga budować drzewo.
+
+Na tej podstawie możmy wnioskować, które cechy najlepiej rozróżniają klasy. Są to:
+
+  * `Al`,
+  * `Mg`,
+  * `Ca`.
+  
+Patrząc na wykres \ref{fig:glass.zmienność} zmienności cech w całym zbiorze danych, może to nie być oczywisty wniosek. 
+
+
+\newpage
+
+
+W oparciu o wybrane wyżej cechy i najoptymalniejsze wartości parametrów `mtry` oraz `ntree` spróbujemy wyznaczyć błędy klasyfikacji oraz macierze pomyłek.
+
+```{r forest.opt.love}
+forest.opt.love <- forest.glass(glass.uczący, glass.testowy, n = ntree.opt, m = mtry.opt,
+                           formula = Type ~ Al + Mg + Ca)
+```
+
+
+```{r forest.opt.love.pomyłki, fig.cap="\\label{fig:forest.opt.love.pomyłki}Macierz pomyłek na zbiorze uczącym (po lewej) i testowym (po prawej) dla wybranych najlepiej rozróżniających klasy cech."}
+
+grid.arrange(macierz(forest.opt.love[[1]], "uczący", 8)$gtable, macierz(forest.opt.love[[3]], "testowy", 8)$gtable, ncol = 2)
+```
+
+Błąd klasyfikacji na zbiorze uczącym: `r round(forest.opt.love[[2]], 3)`.
+
+Błąd klasyfikacji na zbiorze testowym: `r round(forest.opt.love[[4]], 3)`.
+
+
+### Schemat *boostrap 632plus*
+
+```{r forest.telefon.do.przyjaciela}
+my.forest <- function(formula, data) {
+  randomForest(formula, data = data, importance = TRUE, mtry = mtry.opt, ntree = ntree.opt)
+}
+
+my.predict <- function(model, newdata) {
+  predict(model, newdata = newdata)
+}
+```
+
+```{r forest.632plus, cache=TRUE}
+forest.plus <- errorest(Type ~., Glass, model = my.forest, predict = my.predict,
+         estimator = "632plus", est.para = control.errorest(nboot = 50))$error
+```
+
+Błąd klasyfikacji metodą *bootstrap 632plus* wynosi `r round(forest.plus, 3)`.
+
+
+\newpage
+
+
+## Wnioski cząstkowe *random forest*
+
+```{r forest.tabelka, tab.cap="\\label{forest.tabelka}Tabelka pozwalająca porównać błędy klasyfikacji dla algorytmu random forest."}
+metoda <- c("Model podstawowy - domyślne parametry", "Optymalne parametry ntree i mtry", "Optymalne parametry ntree i mtry - ważność", "OOB", "Schemat bootstrap 632plus")
+uczący.tabela <- c(round(c(forest.basic[[2]], forest.opt[[2]], forest.opt.love[[2]]), 3), "-", "-")
+testowy.tabela <- round(c(forest.basic[[4]], forest.opt[[4]], forest.opt.love[[4]], error.oob, forest.plus), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Metoda = metoda,
+  Błąd_zbiór_uczący = uczący.tabela,
+  Błąd_zbiór_testowy = testowy.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+# ulubiony i najgorszy
+ulubiony.forest <- metoda[which.min(testowy.tabela)]
+ulubiony.forest.error <- min(testowy.tabela)
+
+bad.forest <- metoda[which.max(testowy.tabela)]
+bad.forest.error <- max(testowy.tabela)
+```
+
+Porównując wszystkie wyznaczone w analizie błędy klasyfikacji (tabela \ref{fig:forest.tabelka}), widzimy, że dla algorytmu *random forest* najlepszy wynik otrzymujemy, wykorzystując `r ulubiony.forest` i wynosi on `r ulubiony.forest.error`. Natomiast największy, wynoszący `r bad.forest.error`, wykorzystując `r bad.forest`.
+
+Co ciekawe, błąd na zbiorze testowym OOB okazał się gorszy jedynie od błędu wyznaczonego przez `r ulubiony.forest`. Ponadto wykorzystanie cech, które według wykresu \ref{fig:forest.ranking.opt} wydawały się najważniejsze, jako propozycja do zmniejszenia błędu klasyfikacji, okazało się złym pomysłem. Błąd jest znacznie większy od wszystkich pozostałych
+
+
+\newpage
+
+
+## Wnioski końcowe
+
+```{r ulubiona.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie najmniejsze błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+modele <- c("Pojedyncze drzewo klasyfikacji", paste("Metoda SVM -", ulubiony.svm), paste("Metoda bagging -", ulubiony.bag), paste("Metoda boosting -", ulubiony.boost), paste("Random forest -", ulubiony.forest))
+error.tabela <- round(c(tree.opt[[4]], ulubiony.svm.error, ulubiony.bag.error, ulubiony.boost.error, ulubiony.forest.error), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = modele,
+  Błąd_zbiór_testowy = error.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+ulubiony.error <- min(tabelka$Błąd_zbiór_testowy)
+ulubiony <- tabelka[tabelka$Błąd_zbiór_testowy == ulubiony.error, ]
+
+bad.love <- modele[which.max(error.tabela)]
+bad.love.error <- max(error.tabela)
+```
+
+
+Na podstawie tabelki \ref{fig:ulubiona.ostatnia.tabelka} najmniejszy błąd klasyfikacji otrzymujemy, wykorzystując `r ulubiony`. Ten błąd wynosi `r ulubiony.error`. Jest to zatem najlepsza metoda dla danych `Glass`. Można było się tego spodziewać, ponieważ oba podejścia opierają się na wielokrotnym tworzeniu drzew. Dodatkowo zastosowanie metody *bootstrap 632plus* skutecznie zapobiega przeuczeniu modelu, dzięki czemu jest to algorytm wyjątkowo stabilny i bezpieczny.
+
+Najgorszy z najlepszych okazał się `r bad.love`, wynoszący `r bad.love.error`.
+
+
+```{r bad.ostatnia.tabelka, tab.cap="\\label{fig:ulubiona.ostatnia.tabelka}Tabelka pozwalająca porównać wszystkie, wcześniej wybrane, największe błędy klasyfikacji i sposoby ich wyznaczenia dla każdego z testowanych algorytów."}
+modele <- c("Pojedyncze drzewo klasyfikacji", paste("Metoda SVM -", bad.svm), paste("Metoda bagging -", bad.bag), paste("Metoda boosting -", bad.boost), paste("Random forest -", bad.forest))
+error.tabela <- round(c(tree.opt[[4]], bad.svm.error, bad.bag.error, bad.boost.error, bad.forest.error), 3)
+
+# Tworzymy ramkę danych
+tabelka <- data.frame(
+  Zestaw = modele,
+  Błąd_zbiór_testowy = error.tabela
+)
+
+# Wyświetlamy tabelką
+kable(tabelka)
+
+bad <- modele[which.max(error.tabela)]
+bad.error <- max(error.tabela)
+```
+
+Porównując błędy z najlepszej opcji w każdej metodzie największy błąd klasyfikacji otrzymujemy, wykorzystując `r bad`. Ten błąd wynosi `r bad.error`. Jest to zatem najgorsza metoda dla danych `Glass`.
+
+
