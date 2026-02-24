@@ -14,4 +14,4 @@ Głównym celem analizy było porównanie skuteczności różnych metod prognozo
 * **Miary dokładności**: Porównanie modeli na zbiorze testowym przy użyciu miar RMSE, MAE, MAPE oraz MASE.
 
 ## Wyniki i Wnioski
-Model **SARIMA$(0, 1, 4)(0, 1, 0)_4$** okazał się bezkonkurencyjny, osiągając najniższe błędy prognoz i jako jedyny uzyskując wartość MASE < 1, co oznacza wyższą skuteczność od metody naiwnej. Ponadto pokazano, że modele ARIMA cechują się większą elastycznością w reagowaniu na gwałtowne zmiany trendu niż klasyczna dekompozycja.
+Model **SARIMA(0, 1, 4)(0, 1, 0)₄** okazał się bezkonkurencyjny, osiągając najniższe błędy prognoz i jako jedyny uzyskując wartość MASE < 1, co oznacza wyższą skuteczność od metody naiwnej. Ponadto pokazano, że modele ARIMA cechują się większą elastycznością w reagowaniu na gwałtowne zmiany trendu niż klasyczna dekompozycja.
