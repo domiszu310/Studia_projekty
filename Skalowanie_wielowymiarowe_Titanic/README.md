@@ -1,4 +1,4 @@
-# Odkrywanie ukrytych struktur i wizualizacja danych wielowymiarowych - 
+# Odkrywanie ukrytych struktur i wizualizacja danych wielowymiarowych - analiza zbioru Titanic metodą MDS
 
 ## Cel projektu
 Głównym celem analizy było zidentyfikowanie naturalnych skupisk pasażerów Titanica oraz ukrytych wzorców, które mogły mieć wpływ na ich ocalenie. Badanie przeprowadzono w sposób nienadzorowany (bez wstępnego użycia zmiennej o przeżyciu), aby sprawdzić, czy struktura danych sama w sobie odzwierciedla szanse na przetrwanie.
@@ -15,4 +15,11 @@ Głównym celem analizy było zidentyfikowanie naturalnych skupisk pasażerów T
 
 ## Kluczowe wnioski
 Wizualizacja MDS wyraźnie wyodrębniła skupiska pasażerów ze względu na płeć oraz klasę podróży, co potwierdziło silną zależność między strukturą danych a ocaleniem. Analiza wykazała, że największe szanse na przeżycie miały kobiety z pierwszej i drugiej klasy. Ponadto płeć i klasa miały kluczowy wpływ na przetrwanie, przewyższając znaczenie wieku.
+
+## Uwagi techniczne
+Ze względu na ograniczenia rozmiaru plików platformy GitHub raport został podzielony na dwie części:
+  * **[Titanic_raport.pdf](./Titanic_raport.pdf)** – analiza merytoryczna, eksploracja danych oraz wyniki MDS w wysokiej rozdzielczości,
+  * **[Titanic_shepard.pdf](./Titanic_shepard.pdf)** – diagram Sheparda wraz z komentarzem (ze względu na bardzo duży rozmiar, plik został poddany kompresji).
+
+Pełny, nieskompresowany raport można wygenerować lokalnie, uruchamiając plik `Titanic.Rmd`.
 
