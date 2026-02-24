@@ -17,8 +17,9 @@ Głównym celem analizy było zidentyfikowanie naturalnych skupisk pasażerów T
 Wizualizacja MDS wyraźnie wyodrębniła skupiska pasażerów ze względu na płeć oraz klasę podróży, co potwierdziło silną zależność między strukturą danych a ocaleniem. Analiza wykazała, że największe szanse na przeżycie miały kobiety z pierwszej i drugiej klasy. Ponadto płeć i klasa miały kluczowy wpływ na przetrwanie, przewyższając znaczenie wieku.
 
 ## Uwagi techniczne
-* **Raport PDF**: Ze względu na rozmiar diagramu Sheparda plik przekroczył dopuszczalny limit rozmiaru przysyłanych plików na GitHubie i został podzielony na dwie części:
-    * `Titanic_1.pdf`
-    * `Titanic_2.pdf`
+* **Raport PDF**: Ze względu na rozmiar diagramu Sheparda plik przekroczył dopuszczalny limit rozmiaru przysyłanych plików na GitHubie i został podzielony na trzy części:
+    * `Titanic_1.pdf`,
+    * `Titanic_2.pdf` - diagram Sheparda + komentarz,
+    * `Titanic_3.pdf`
       
 Pełny raport można odtworzyć samodzielnie, uruchamiając dołączony plik `Titanic.Rmd` w środowisku RStudio.
