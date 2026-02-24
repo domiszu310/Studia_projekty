@@ -32,11 +32,6 @@ W tym repozytorium znajdują się moje projekty zrealizowane podczas studiów, s
 * **Główne metody:** SARIMA, algorytmy wygładzania wykładniczego (Holt-Winters), modele dekompozycji z trendem sześciennym.
 * **[Kod i raport](./Porównanie_dokładności_prognoz)**
 
-### 5. Sprawozdania z arkuszy kalkulacyjnych
-* **Opis:** Wykorzystanie Excela do zaawansowanych obliczeń statystycznych i automatyzacji raportowania danych.
-* **Technologie:** Microsoft Excel, tabele przestawne.
-* **[Folder](./Sprawozdanie%20z%20arkusza%20kalkulacyjnego%20-%20Excel....)**
-
 ---
 
 **Autor:** Dominika Szulc
