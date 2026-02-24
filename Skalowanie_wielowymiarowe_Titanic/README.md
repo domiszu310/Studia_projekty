@@ -1,4 +1,4 @@
-# Odkrywanie ukrytych struktur: Wizualizacja danych Titanica metodą MDS
+# Odkrywanie ukrytych struktur i wizualizacja danych wielowymiarowych - 
 
 ## Cel projektu
 Głównym celem analizy było zidentyfikowanie naturalnych skupisk pasażerów Titanica oraz ukrytych wzorców, które mogły mieć wpływ na ich ocalenie. Badanie przeprowadzono w sposób nienadzorowany (bez wstępnego użycia zmiennej o przeżyciu), aby sprawdzić, czy struktura danych sama w sobie odzwierciedla szanse na przetrwanie.
