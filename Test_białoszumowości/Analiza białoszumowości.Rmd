@@ -1,0 +1,773 @@
+---
+title: "Analiza białoszumowości i symulacje testów statystycznych w szeregach czasowych"
+author: "Dominika Szulc"
+date: "2025-11-06"
+encoding: UTF-8
+lang: pl
+output:
+  pdf_document:
+      number_sections: true
+      toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning=FALSE,
+  message=FALSE,
+  out.extra = ""
+)
+```
+
+```{r biblioteki, message=FALSE, warning=FALSE, include=FALSE}
+# if(!require()) install.packages("")
+set.seed(772)
+library(TSAFBook)
+library(knitr)
+library(forecast)
+library(dplyr)
+library(kableExtra)
+```
+
+
+# Testowanie białoszumowości
+
+Wykorzystując własności funkcji autokorelacji białego szumu oraz rozkład asymptotyczny autokorelacji próbkowej, zaimplementujemy funkcje pozwalające weryfikować hipotezę, że obserwowany szereg czasowy jest szeregiem czasowym typu biały szum na asymptotycznym poziomie istotności równym $\alpha$. W analizie wykorzystamy dwa podejścia:
+
+  * test graficzny,
+  * formalne testy statystyczne:
+  
+    * test Boxa-Pierce'a,
+    * test Ljungi-Boxa.
+    
+Następnie przeprowadzimy symulacje komputerowe porównujące skuteczność obu tych podejść do testowaniu białoszumości. W badaniu uwzględnimy szeregi:
+
+  * o różnym rozkładzie,
+  * o różnej długości,
+  * różny wybór maksymalnego opóźnienia `h.max`,
+  * szeregi czasowe inne niż szum i.i.d.
+
+
+\newpage
+
+
+## Graficzny test białoszumowości
+
+Na początek zaimplementujemy test graficzny.
+
+W naszej funkcji `test.graficzny` wykorzystujemy asymptotyczne własności białego szumu, co pozwala skorzystać z reguły trzech sigm dla wartości autokorelacji (muszą być one w przedziale $\left( \frac{-3}{\sqrt{n}}, \frac{3}{\sqrt{n}} \right)$).
+
+Funkcja `test.graficzny` przyjmuje argumenty:
+
+  * `x` - szereg czasowy,
+  * `h` - maksymalne opóźnienie (domyślnie $h_{max} = \lfloor{\frac{n}{4}}\rfloor$, gdzie $n$ jest liczbą elementów szeregu),
+  * parametr `wykres` - określa, czy funkcja zwraca wykres ACF (domyślnie `FALSE`).
+
+Korzystając z funkcji `Acf` z pakietu `forecast`, wyznaczamy wartości autokorelacji dla zadanego szeregu przy danym maksymalnym opóźnieniu `h`. Usuwamy z tabeli wartość autokorelacji dla opóźnienia $h = 0$, ponieważ jest to korelacja szeregu z samym sobą (zawsze równa $1$) i nie wnosi to żadnej isotnej informacji do naszej analizy. Następnie sprawdzamy, czy pozostałe wartości pokrywają przedział ufności określony przez regułę trzech sigm.
+
+W zależności od argumentu `wykres`, funkcja zwraca:
+
+  * wykres ACF z granicami istotności dla zadanego szeregu i maksymalnego opóźnienia `h` (`wykres == TRUE`),
+  * tabelę z wartością opóźnienia, autokorelacji oraz informacją, czy dana wartość wychodzi poza przedział istotności.
+
+
+```{r graficzny.funkcja, echo=TRUE}
+test.graficzny <- function(x, h = floor(length(x)/4), wykres = FALSE){ # zadajemy szereg
+  n <- length(x)
+  
+  wartość.acf <- Acf(x, lag.max = h, type = "correlation", plot = FALSE)
+  
+  acf.przypadki <- as.numeric(wartość.acf$acf[-1])
+  
+  h.wszystkie <- 1:length(acf.przypadki)
+  granica <- 3/sqrt(n) # reguła 3-sigm
+  
+  istotne <- abs(acf.przypadki) > granica
+  
+  if (wykres == TRUE){
+    wykres.szum <- ggAcf(x, h, type = "correlation")
+    
+    return(wykres.szum)
+    
+  } else {
+    
+    return(data.frame(Opóźnienie = h.wszystkie,
+                      ACF = round(acf.przypadki, 3),
+                      Poza_przedziałem = istotne)) # TRUE wychodzi, FALSE - w przedziale
+  }
+}
+```
+
+
+\newpage
+
+Do wyciągania wniosków, czy szereg faktycznie jest białym szumem, posłuży nam **reguła identyfikacji modelu $WN(0, \sigma^2)$** poznana na wykładzie.
+
+### Reguła identyfikacji modelu $WN(0, \sigma^2)$
+
+Szereg możemy uznać za realizację białego szumu, jeżeli:
+
+  * co najmniej $95\%$ wartości autokorelacji próbkowych znajduje się w przedziale ufności $\left( \frac{-1,96}{\sqrt{n}}, \frac{1,96}{\sqrt{n}} \right)$,
+  * nie powinno być autokorelacji *istotnie* wychodzących poza ten przedział.
+  
+  
+  
+
+
+
+### Test
+
+Przetestujemy teraz działanie funkcji `test.graficzny` dla dwóch szeregów czasowych z domyślnym maksymalnym opóźnieniem:
+
+```{r ile.szum}
+n.biały <- 30
+```
+
+  * biały szum - $`r n.biały`$-elementowa próba wygenerowana z rozkładu normalnego $N(0, 1)$,
+  * dane `AirPass` z pakietu `TSAFBook` - miesięczna liczba pasażerów linii lotniczych w USA (styczeń $2002$ - luty $2014$) - przykład szeregu niebędącego białym szumem.
+
+
+
+  a) Biały szum
+  
+  
+```{r biały.szum.test}
+set.seed(772)
+biały.szum <- rnorm(n.biały, mean = 0, sd = 1)
+```
+
+
+```{r biały.szum.test.tabela, tab.cap="\\label{fig:biały.szum.test.tabela}Tabela przedstawiająca wyniki testu graficznego dla szeregu biały.szum."}
+tabela.biały <- test.graficzny(biały.szum, wykres = FALSE)
+
+kable(tabela.biały)
+```
+
+Jak widać w tabeli \ref{fig:biały.szum.test.tabela} żadna z wartości naszego szeregu `biały.szum` nie wychodzi poza wyznaczony przedział ufności. Zatem na podstawie *reguły identyfikacji modelu $WN(0, \sigma^2)$* szereg ten jest białym szumem.
+
+Zwizualizujmy jeszcze `biały.szum` na wykresie autokorealcji ACF.
+
+\newpage
+
+
+```{r biały.szum.test.wykres, fig.cap="\\label{fig:biały.szum.test.wykres}Wykres ACF dla szeregu biały.szum."}
+test.graficzny(biały.szum, wykres = TRUE)
+```
+
+Wykres \ref{fig:biały.szum.test.wykres} potwierdza wyciągnięty wcześniej wniosek - wszystkie wartości autokorelacji mieszczą się w granicach istotności (oznaczonych przerywanymi liniami). Potwierdza to, że analizowany szereg jest realizacją białego szumu.
+
+
+\newpage
+
+
+  b) Dane `AirPass`
+  
+Na początek upewnijmy się, że `AirPass` jest szeregiem czasowym.
+
+```{r airpass.dane}
+data(AirPass)
+air <- AirPass
+```
+
+
+`AirPas` jest klasy `r class(air)`, więc jest szeregiem czasowym. Możemy spokojnie zastosować dla niego funkcję `test.graficzny`, aby sprawdzić, czy jest on białym szumem.
+
+
+```{r air.test.tabela, tab.cap="\\label{fig:air.test.tabela}Tabela przedstawiająca wyniki testu graficznego dla szeregu czasowego AirPass."}
+tabela.air <- test.graficzny(air, wykres = FALSE)
+
+n.air <- length(tabela.air$Poza_przedziałem)
+air.nie <- sum(tabela.air$Poza_przedziałem)
+air.tak <- n.air - air.nie
+
+kable(tabela.air)
+```
+
+Jak widać w tabeli \ref{fig:air.test.tabela} wartości są zróżnicowane: `r air.nie` obserwacji wychodzi poza wyznaczony przedział ufności, natomiast pozostałe `r air.tak` obserwacje znajdują się w tym przedziale.
+Oznacza to, że `r round(air.tak/n.air * 100, 2)`$\%$ obserwacji znajduje się wewnątrz granic.
+Zatem, na podstawie reguły identyfikacji modelu $WN(0, \sigma^2)$ szereg `AirPass` nie jest białym szumem, ponieważ nie spełnia jej warunków.
+
+
+Zwizualizujmy jeszcze `AirPass` na wykresie autokorealcji ACF.
+
+\newpage
+
+
+```{r air.test.wykres, fig.cap="\\label{fig:air.test.wykres}Wykres ACF dla szeregu czasowego AirPass."}
+test.graficzny(air, wykres = TRUE)
+```
+
+
+Wykres \ref{fig:air.test.wykres} potwierdza wyciągnięty wcześniej wniosek - znaczna część wartości autokorelacji wychodzi poza granice istotności. Potwierdza to, że analizowany szereg nie jest realizacją białego szumu.
+
+
+\newpage
+
+### Funkcja pomocnicza
+
+W przypadku analizowania pojedynczego szeregu czasowego "ręczna" interpretacji wyników funkcji `test.graficzny` nie stanowi problemu. Jednak w analizie symulacyjnej, w której musimy ocenić wiele niezależnych realizacji, podejście to staje się niepraktyczne. Dlatego implementujemy funkcję pomocniczą `wynik.graficzny`.
+
+Funkcja ta - w oparciu o **regułę identyfikacji modelu $WN(0, \sigma^2)$** oraz wynik funkcji `test.graficzny` - zwraca wartość logiczną `TRUE` lub `FALSE`, informując, czy analizowany szereg można uznać za biały szum.
+
+
+```{r wynik.graficzny, echo=TRUE}
+wynik.graficzny <- function(x, h = floor(length(x)/4)){
+  test.graf <- test.graficzny(x = x, h = h, wykres = FALSE)
+  
+  # część informacji poza przedziałem istotności
+  poza <- mean(test.graf$Poza_przedziałem)
+  
+  # TRUE = biały szum
+  wynik <- poza < 0.05 
+  
+  return(wynik)
+}
+```
+
+
+
+\newpage
+
+
+## Formalne testy statystyczne
+
+Tworzymy teraz analogiczną implementację pozwalającą na przeprowadzanie formalnych testów stastystycznych Boxa-Pierce'a i Ljungi-Boxa. Oba testy bazują na analizie sumy kwadratów autokorelacji próbkowych do zadanego opóźnienia $h$, co pozwala na ocenę, czy w szeregu występuje istotna zależność między obserwacjami.
+
+W tym podejściu formułujemy następujące hipotezy:
+
+
+\[
+\begin{cases}
+H_0: \text{szereg jest białym szumem (brak/niewielka autokorelacja)} \\
+H_1: \text{szereg nie jest białym szumem (występuje istotna autokorelacja)}
+\end{cases}
+\]
+
+
+Funkcja `test.formalny` przyjmuje argumenty:
+
+  * `x` - szereg czasowy,
+  * `h` - maksymalne opóźnienie (domyślnie $h_{max} = \lfloor{\frac{n}{4}}\rfloor$, gdzie $n$ jest liczbą elementów szeregu),
+  * `alfa` - poziom istotności $\alpha$ (domyślnie $0.05$).
+
+Korzystając z funkcji `Box.test` wyznaczamy wartości statystyk testowych oraz odpowiadające im p-value dla testów Boxa-Pierce'a i Ljungi-Boxa. Następnie na podstawie porównania p-value z poziomem istotności $\alpha$ podejmujemy decyzję o odrzuceniu lub braku podstaw do odrzucenia hipotezy zerowej $H_0$.
+
+Funkcja zwraca tabelę zawierającą:
+
+  * nazwę testu,
+  * wartość maksymalnego opóźnienia,
+  * wartość statystyki testowej,
+  * p-value,
+  * informację, czy istnieją podstawy do odrzucenia hipotezy $H_0$ (gdy p-value < $\alpha$).
+  
+
+
+```{r formalny.funkcja, echo=TRUE}
+test.formalny <- function(x, h = floor(length(x)/4), alfa = 0.05){
+  n <- length(x)
+  
+  BP <- Box.test(x, lag = h, type = "Box-Pierce")
+  LB <- Box.test(x, lag = h, type = "Ljung-Box")
+  
+  decyzja.BP <- BP$p.value < alfa # TRUE = odrzucamy = nie biały szum
+  decyzja.LB <- LB$p.value < alfa
+  
+  return(data.frame(Test = c("Box-Pierce", "Ljung-Box"),
+                    Max_opóźnienie = h,
+                    Wartość_statystyki_testowej = c(round(BP$statistic, 5),
+                                                    round(LB$statistic, 5)),
+                    P_value = c(round(BP$p.value, 5),
+                                round(LB$p.value, 5)),
+                    Odrzucamy_H0 = c(decyzja.BP, decyzja.LB)))
+  
+}
+```
+
+
+\newpage
+
+### Test
+
+Przetestujemy teraz działanie funkcji `test.formalny` dla tych samych szeregów czasowych, których użyłyśmy dla `test.graficzny`, dla domyślnych parametrów.
+
+
+  a) Biały szum
+  
+
+```{r biały.szum.test.tabela.form, tab.cap="\\label{fig:biały.szum.test.tabela.form}Tabela przedstawiająca wyniki formalnych testów statystycznych dla szeregu biały.szum."}
+tabela.biały.form <- test.formalny(biały.szum) 
+
+kable(tabela.biały.form)
+```
+
+
+Jak widać w tabeli \ref{fig:biały.szum.test.tabela.form} dla obu statystyk testowych wartość p-value jest większa od domyślnego poziomu istotności $\alpha$, więc informacja o odrzuceniu hipotezy $H_0$ jest fałszywa. Ponadto wartości statystyk testowych są stosunkowo małe, co oznacza brak istotnych autokorelacji w szeregu - zgodnie z oczekiwaniami białego szumu. Zatem dla `biały.szum` możemy przyjąć hipotezę $H_0$ - szereg jest białym szumem.
+
+
+
+  b) Dane `AirPass`
+
+
+```{r air.test.tabela.form, tab.cap="\\label{fig:air.test.tabela.form}Tabela przedstawiająca wyniki formalnych testów statystycznych dla szeregu czasowego AirPass."}
+tabela.air.form <- test.formalny(air) 
+
+kable(tabela.air.form)
+```
+
+Jak widać w tabeli \ref{fig:air.test.tabela.form} dla obu statystyk testowych wartość p-value wynosi $0$, zatem jest mniejsza od poziomu istotności $\alpha$, więc informacja o odrzuceniu hipotezy $H_0$ jest prawdziwa. Ponadto wartości statystyk testowych są stosunkowo duże, co wskazuje na silne zależności w szeregu. Zatem dla `AirPass` odrzucamy hipotezę $H_0$  - szereg nie jest białym szumem.
+
+
+### Funkcja pomocnicza
+
+Podobnie jak w przypadku testu graficznego, wprowadzamy funkcję pomocniczą `wynik.formalny`, która automatyzuje proces podejmowania decyzji na podstawie wyników funkcji `test.formalny`.
+
+Funkcja uznaje szereg za biały szum (`TRUE`), jeżeli żaden z testów, Boxa-Pierce’a i Ljunga-Boxa, nie odrzuca hipotezy zerowej $H_0$. W przeciwnym wypadku zwracana jest wartość `FALSE`.
+
+
+```{r wynik.formalny, echo=TRUE}
+wynik.formalny <- function(x, h = floor(length(x)/4), alfa = 0.05){
+  test.form <- test.formalny(x = x, h = h, alfa = alfa)
+  
+  wynik <- !any(test.form$Odrzucamy_H0) # TRUE = biały szum
+  
+  return(wynik)
+}
+```
+
+
+### Wniosek
+
+Wnioski wyciągnięte za pomocą testu graficznego oraz formalnych testów statystycznych dla przedstawionych przykładów pokrywają się.
+
+
+\newpage
+
+
+## Symulacje
+
+Przeprowadzimy teraz symulacje komputerowe pozwalające porównać oba zaimplementowane wcześniej podejścia.
+
+
+W tym celu tworzymy funkcję `symulacja`, przyjmującą argumenty:
+
+  * `typ.szeregu` - rozkład/rodzaj szeregu, który będziemy testować, dostępne możliwości:
+  
+    * `normalny` - próba z rozkładu normalnego $N(0, 1)$,
+    * `wykładniczy` - próba z rozkładu wykładniczego o domyślnych parametrach,
+    * `binarny` - proces binarny,
+    * `MA1` - model ruchomej średniej rzędu $1$ dla $\theta = 0.5$,
+    * `RW` - błądzenie losowe,
+    * `trend` - biały szum (próba z rozkładu normalnego $N(0, 1)$) z trendem liniowym,
+    * `sezon` - sezonowość z białym szumem (próba z rozkładu normalnego $N(0, 1)$).
+    
+    Domyślnie `normalny`.
+    
+  * `n` - liczba elementu w generowanym szeregu (domyślnie $n = 30$),
+  * `h.max` - maksymalne opóźnienie (domyślnie $h_{max} = \lfloor{\frac{n}{4}}\rfloor$),
+  * `alfa` - poziom istotności (domyślnie $0.05$),
+  * `ile.powtórzeń` - liczba szeregów o danym typie, które generujemy (domyślnie $100$).
+  
+Funkcja dla zadanych argumentów generuje szeregi. Następnie, za pomocą wcześniej zaimplementowanych funkcji `wynik.graficzny` i `wynik.formalny`, sprawdzamy, które szeregi w ciągu są białym szumem i obliczamy, jaką część wszystkich prób to stanowi. Zwracamy tabelę, zawierającą:
+
+  * liczbę powtórzeń `ile.powtórzeń`,
+  * długość szeregu $n$,
+  * maksymalne opóźnienie `h.max`,
+  * procent szeregów w ciągu będących białym szumem według testu graficznego,
+  * procent szeregów w ciągu będących białym szumem według testu formalnego.
+  
+\newpage
+
+
+```{r symulacja.funkcja, echo=TRUE}
+symulacja <- function(typ.szeregu = c("normalny", "wykładniczy", "binarny",
+                                      "MA1", "RW", "trend", "sezon"),
+                      n = 30, h.max = floor(n/4), alfa = 0.05, ile.powtórzeń = 100){
+  
+  typ.szeregu <- match.arg(typ.szeregu)
+  t <- 1:n
+  
+  if (typ.szeregu == "normalny"){
+    
+    szereg <- matrix(rnorm(n * ile.powtórzeń, mean = 0, sd = 1), n, ile.powtórzeń)
+    
+  } else if (typ.szeregu == "wykładniczy") { # rozkład wykładniczy
+    
+    szereg <- matrix(rexp(n * ile.powtórzeń), n, ile.powtórzeń)
+    
+  } else if (typ.szeregu == "binarny") { # rozkład dyskretny - binarny
+    
+    szereg <- matrix(sample(c(0,1), size = n * ile.powtórzeń, replace = TRUE),
+                     n, ile.powtórzeń)
+    
+  } else if (typ.szeregu == "MA1") { # model ruchomej średniej rzędu 1 MA(1)
+    
+    szereg <- replicate(ile.powtórzeń, arima.sim(n = n, model = list(ma = 0.5)))
+    
+  } else if (typ.szeregu == "RW") { # błądzenie losowe
+    
+    szereg <- replicate(ile.powtórzeń, cumsum(rnorm(n)))
+    
+  } else if (typ.szeregu == "trend") { # biały szum z trendem liniowym
+    
+    szereg <- replicate(ile.powtórzeń, rnorm(n, mean = 0, sd = 1) + 0.2*t)
+    
+  } else if (typ.szeregu == "sezon"){ # biały szum z trendem sezonowym
+    
+    szereg <- replicate(ile.powtórzeń, rnorm(n, mean = 0, sd = 1) + sin(2*pi*t/12))
+  }
+  
+  graficzny <-  apply(szereg, 2, function(x) wynik.graficzny(x, h = h.max))
+  
+  formalny <- apply(szereg, 2, function(x) wynik.formalny(x, h = h.max, alfa = alfa))
+  
+  # jaka część szeregów jest biały szumem wg. testu graficznego
+  ile.biały.graf <- mean(graficzny) 
+  
+  # jaka część szeregów jest biały szumem wg. testu formalnego
+  ile.biały.form <- mean(formalny) 
+  
+  return(data.frame(Liczba_powtórzeń = ile.powtórzeń,
+                    Długość_szeregu = n,
+                    Maksymalne_opóźnienie = h.max,
+                    Biały_szum_graficznie_procent = ile.biały.graf*100,
+                    Biały_szum_formalnie_procent = ile.biały.form*100))
+}
+```
+
+\newpage
+
+```{r symulacja.parametry}
+N <- c(10, 25, 50, 100)
+ile.razy <- 100
+```
+
+
+Teraz dla każdego rodzaju szeregu przeprowadzimy symulację, wykorzystując następujące parametry:
+
+  * `N`: `r N`,
+  * `H.MAX`: $1, floor(n/4), floor(n/2), n$, gdzie $n$ jest elementem z $N$.
+  
+Pozostałe parametry przyjmują wartości domyślne, dlatego usuwamy z tabeli wynikowej kolumnę informującą o liczbie powtórzeń - stale wynosi $100$.
+
+
+### Rozkład normalny $N(0, 1)$
+
+```{r symulacja.normalny, cache=TRUE, tab.cap="\\label{fig:symulacja.normalny}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego z rozkładu normalnego, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.norm <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "normalny", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.norm <- rbind(wyniki.norm, sym)
+  }
+}
+
+wyniki.norm <- wyniki.norm %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+
+colnames(wyniki.norm) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.norm, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+
+```
+
+
+Dla rozkładu normalnego test graficzny prawie zawsze uznaje szeregi za białe szumy – niezależnie od długości szeregu oraz wybranego opóźnienia maksymalnego $h_{max}$, procent szeregów uznanych za biały szum wynosi w większości przypadków $100\%$. Pozostaje zatem praktycznie niewrażliwy na zmianę maksymalnego opóźnienia $h_{max}$.
+
+Test formalny jest zdecydowanie bardziej wrażliwy na zmianę maksymalnego opóźnienia oraz długości szeregu. W żadnym przypadku nie wykazał, że wszystkie szeregi są białym szumem. Dla standardowego maksymlanego opóźnienia, za które uznaje się $h_{max} = \lfloor{\frac{n}{4}}\rfloor$, test formalny jest zazwyczaj najbardziej czuły.
+
+Dla bardzo dużych opóźnień ($h_{max} = n$) w testach formalnych nie zawsze możliwe jest policzenie statystyki testowej, w wyniku czego w tabeli pojawiają się wartości `NA`. W dalszych tabelach takie przypadki również występują.
+
+
+Podsumowując, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficznym.
+
+\newpage
+
+
+### Rozkład wykładniczy
+
+```{r symulacja.exp, cache=TRUE, tab.cap="\\label{fig:symulacja.exp}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego z rozkładu wykładniczego, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.exp <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "wykładniczy", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.exp <- rbind(wyniki.exp, sym)
+  }
+}
+
+wyniki.exp <- wyniki.exp %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.exp) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.exp, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+
+
+```
+
+
+Dla rozkładu wykładniczego test graficzny prawie zawsze uznaje szeregi za białe szumy – niezależnie od długości szeregu oraz wybranego opóźnienia maksymalnego $h_{max}$, procent szeregów uznanych za biały szum wynosi w większości przypadków $100\%$. Pozostaje zatem praktycznie niewrażliwy na zmianę maksymalnego opóźnienia $h_{max}$.
+
+Test formalny jest zdecydowanie bardziej wrażliwy na zmianę maksymalnego opóźnienia oraz długości szeregu. W żadnym przypadku nie wykazał, że wszystkie szeregi są białym szumem. Dla standardowego maksymlanego opóźnienia, za które uznaje się $h_{max} = \lfloor{\frac{n}{4}}\rfloor$, test formalny jest zazwyczaj najbardziej czuły.
+
+
+Podsumowując, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficznym, podobnie jak w przypadku rozkładu normalnego.
+
+
+\newpage
+
+### Proces binarny
+
+```{r symulacja.bin, cache=TRUE, tab.cap="\\label{fig:symulacja.bin}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego jako proces binarny, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.bin <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "binarny", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.bin <- rbind(wyniki.bin, sym)
+  }
+}
+
+wyniki.bin <- wyniki.bin %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.bin) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.bin, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+Dla procesu binarnego test graficzny prawie zawsze uznaje szeregi za białe szumy – niezależnie od długości szeregu oraz wybranego opóźnienia maksymalnego $h_{max}$, procent szeregów uznanych za biały szum wynosi w większości przypadków $100\%$. Pozostaje zatem praktycznie niewrażliwy na zmianę maksymalnego opóźnienia $h_{max}$.
+
+Test formalny jest zdecydowanie bardziej wrażliwy na zmianę maksymalnego opóźnienia oraz długości szeregu. W żadnym przypadku nie wykazał, że wszystkie szeregi są białym szumem. Dla standardowego maksymlanego opóźnienia, za które uznaje się $h_{max} = \lfloor{\frac{n}{4}}\rfloor$, test formalny jest zazwyczaj najbardziej czuły.
+
+
+Podsumowując, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficznym, podobnie jak w przypadku rozkładu normalnego i wykładniczego.
+
+
+\newpage
+
+### Model ruchomej średniej rzędu $1$
+
+```{r symulacja.ma, cache=TRUE, tab.cap="\\label{fig:symulacja.ma}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego jako model ruchomej średniej rzędu $1$, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.MA <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "MA1", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.MA <- rbind(wyniki.MA, sym)
+  }
+}
+
+wyniki.MA <- wyniki.MA %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.MA) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.MA, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+
+Dla modelu ruchomej średniej rzędu $1$ test graficzny wciąż jest łagodny dla krótkich szeregów ($n \in \{10, 25\}$) i dużych opóźnień ($h_{max} = n$) - w większości przypadków nadal klasyfikuje szeregi jako białe szumy (procent bliski $100\%$). Jednak im dłuższy szereg ($n \in \{50, 100\}$) i mniejsze opóźnienie, tym widać większy spadek liczby szeregów uznanych za biały szum (np. dla $n = 100$ oraz $h_{max} = 1$ jedynie $16\%$ szeregów jest białym szumem).
+
+
+Test formalny jest zdecydowanie bardziej wrażliwy - odsetek białych szumów znacznie spada już dla szeregu o długości $n = 25$ (dla $h_{max} = 1$ mamy $62\%$ białych szumów). Wraz ze wzrostem długości szeregu i zmniejszeniem się opóźnienia, test formalny skuteczniej wykrywa obecność autokorelacji, która jest charakterystyczna dla $MA(1)$.
+
+
+Podsumowując, model $MA(1)$ wprowadza istotną autokorelację w szeregu, co test formalny wykrywa znacznie szybciej niż test graficzny, zwłaszcza dla dłuższych szeregów i małych wartości $h_{max}$. Test formalny okazuje się zatem bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficznym, podobnie jak w poprzednich przypadkach.
+
+\newpage
+
+### Błądzenie losowe
+
+```{r symulacja.rw, cache=TRUE, tab.cap="\\label{fig:symulacja.rw}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego jako błądzenie losowe, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.RW <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "RW", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.RW <- rbind(wyniki.RW, sym)
+  }
+}
+
+wyniki.RW <- wyniki.RW %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.RW) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.RW, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+
+Dla błądzenia losowego test graficzny wciąż pozostaje łagodny dla bardzo krótkich szeregów ($n = 10$) niezależnie od wartość maksymalnego opóźnienia $h_{max}$. Jednak wraz ze wzrostem długości szeregu i zmniejszeniem opóźnienia, liczba szregów uznawanych za białe szumy maleje - dla dłuższych szeregów ($n \in \{50, 100\}$) test graficzny wskazuje na brak białych szumów dla części wartości $h_{max}$.
+
+
+Test formalny jest bardziej wrażliwy na obecność autokorelacji, która jest charakterystyczna dla błądzenia losowego. Już dla krótkich szeregów i małych opóźnień ($n \in \{10, 25\}$) spada odsetek białych szumów. Natomiast dla długich szeregów ($n \in \{50, 100\}$) test formalny wskazuje na brak białych szumów.
+
+
+
+Podsumowując, podobnie jak w poprzednich przypadkach, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficzny - jest skuteczniejszy w wykrywaniu autokorelacji w szeregu.
+
+\newpage
+
+
+### Biały szum z trendem liniowym
+
+```{r symulacja.trend, cache=TRUE, tab.cap="\\label{fig:symulacja.trend}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego jako biały szum z trendem liniowym, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.trend <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "trend", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.trend <- rbind(wyniki.trend, sym)
+      
+  }
+}
+
+wyniki.trend <- wyniki.trend %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.trend) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.trend, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+Dla białego szumu z trendem liniowym test graficzny wciąż pozostaje łagodny dla bardzo krótkich szeregów ($n = 10$) niezależnie od wartość maksymalnego opóźnienia $h_{max}$. Jednak wraz ze wzrostem długości szeregu i zmniejszeniem opóźnienia, liczba szregów uznawanych za białe szumy maleje - dla dłuższych szeregów ($n \in \{50, 100\}$) test graficzny wskazuje na brak białych szumów wszystkich wartości $h_{max}$.
+
+
+Test formalny jest bardziej wrażliwy na obecność autokorelacji, charakterystycznej dla białego szumu z trendem liniowym. Już dla krótkich szeregów i małych opóźnień ($n \in \{10, 25\}$) spada odsetek białych szumów. Natomiast dla długich szeregów ($n \in \{50, 100\}$) test formalny wskazuje na brak białych szumów.
+
+
+Podsumowując, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia dla krótkich szeregów w porówaniu z testem graficzny. Natomiast dla długich szeregów oba testy są równie skuteczne.
+
+
+
+
+\newpage
+
+
+
+
+### Sezonowość z białym szumem
+
+```{r symulacja.sezon, cache=TRUE, tab.cap="\\label{fig:symulacja.sezon}Tabela przedstawiająca wyniki symulacji porównującej skuteczność testów graficznych i formalnych dla szeregu generowanego jako sezonowość z białym szumem, przy różnych długościach szeregu oraz różnych wartościach maksymalnego opóźnienia $h_{max}$."}
+set.seed(772)
+
+wyniki.sezon <- data.frame()
+
+for (n in N){
+  H.MAX <- c(1, floor(n/4), floor(n/2), n)
+  for (h in H.MAX){
+      
+      sym <- symulacja(typ.szeregu = "sezon", n = n, h.max = h, ile.powtórzeń = ile.razy)
+      
+      wyniki.sezon <- rbind(wyniki.sezon, sym)
+  }
+}
+
+wyniki.sezon <- wyniki.sezon %>%
+        dplyr::select(-Liczba_powtórzeń)
+
+colnames(wyniki.sezon) <- c(
+  "Długość szeregu",
+  "Maksymalne opóźnienie",
+  "Biały szum - graficznie \\%",
+  "Biały szum - formalnie w \\%"
+)
+
+kable(wyniki.sezon, booktabs = TRUE, escape = FALSE) %>% 
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+
+Dla sezonowości z białym szumem test graficzny wciąż pozostaje łagodny dla krótkich szeregów ($n \in \{10, 25\}$) praktycznie niezależnie od wartość maksymalnego opóźnienia $h_{max}$. Wraz ze wzrostem długości szeregu liczba szregów uznawanych za białe szumy maleje. Trudno jednoznacznie określić zależność od maksymalnego opóźnienia, poza tym że dla $h_{max} = \lfloor{\frac{n}{4}}\rfloor$ test graficzny jest najbardziej surowy.
+
+
+Test formalny jest bardziej wrażliwy na obecność autokorelacji - odsetek białych szumów spada wraz ze wzrostem długości szeregu. Wyniki są zróżnicowane, ale dla długich szeregu ($n = 100$) test formalny wskazuje na brak białych szumów dla średnich wartości maksymalnego opóźnienia.
+
+
+Podsumowując, test formalny okazuje się bardziej wrażliwy na zmiany długości szeregu i maksymalnego opóźnienia w porówaniu z testem graficzny.
+
+
+\newpage
+
+
+### Wnioski
+
+W przypadku wszystkich rozważanych typów szeregów test formalny okazał się bardziej wrażliwy i skuteczny w wykrywaniu autokorelacji w szeregu niż test graficzny, niezależnie od długości szeregu czy wartości maksymalnego opoźnienia.
+
+Oba testy były najłagodniejsze dla krótkich szeregów, natomiast najsurowsze dla większości dłuższych szeregów. Ogólnie, dla długich szeregów dla bardzo małych maksymalnych opóźnień ($h_{max} = 1$) najmniejsza część szeregów została uznana za biały szum.
+
+Ponadto warto zauważyć, że test formalny dla bardzo dużych wartości maksymalnego opóźnienia ($h_{max} = n$) zwracał wartość `NA`. Jest to wynik ograniczeń statystycznych związanych z liczbą obserwacji i niemożnością wyznaczenia statystyki testowej dla takich opóźnień.
+
+
+
+
+
