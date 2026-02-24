@@ -1,0 +1,989 @@
+---
+title: "Prognozowanie szeregów czasowych - analiza porównawcza modeli (S)ARIMA, ETS i dekompozycji"
+author: "Dominika Szulc"
+date: "2026-02-04"
+encoding: UTF-8
+lang: pl
+
+header-includes:
+  - \usepackage{float}
+
+output:
+  pdf_document:
+      number_sections: true
+      toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning=FALSE,
+  message=FALSE,
+  fig.pos = "H", 
+  out.extra = ""
+)
+```
+
+```{r biblioteki}
+set.seed(772)
+library(forecast)
+library(fpp2)
+data("euretail")
+library(ggplot2)
+library(knitr)
+```
+
+\newpage
+
+# Porównanie dokładności prognoz dla danych `euretail`
+
+## Cel analizy
+
+Naszym celem jest porównanie dokładności prognoz skonstruowanych na bazie:
+
+  * modeli (S)ARIMA,
+  * modeli dekompozycji,
+  * algorytmów wygładzania wykładniczego
+  
+dla danych `euretail` z pakietu `fpp2`. Zbiór zawiera kwartalne wartości indeksu handlu detalicznego dla strefy euro w latach $1996 - 2011$.
+
+Jako domyślny poziom istotności przyjmujemy $\alpha = 0.05$.
+
+## Dane `euretail`
+
+### Typ i klasa danych
+
+Zanim zaczniemy analizę, przyjrzymy się naszym danym.
+
+```{r}
+dane2 <- euretail
+dane2
+```
+
+
+```{r dane2.hello}
+str(dane2)
+```
+
+Są one klasy `r class(dane2)`, co oznacza, że są szeregem czasowym. Nie musimy dokonywać żadnych modyfikacji w tym kierunku.
+
+### Wykres
+
+```{r dane2.hello.wykres, fig.cap="\\label{fig:dane2.hello.wykres}Wykres przedstawiający dane `euretail` - kwartalne wartości indeksu handlu detalicznego w strefie euro."}
+autoplot(dane2) +
+  labs(title = "Dane euretail",
+       x = "Rok",
+       y = "Wartość indeksu")
+```
+
+Jak widać na wykresie \ref{fig:dane2.hello.wykres} do około $2008$ roku obserwujemy wyraźny trend wzrostowy, a następnie gwałtowny spadek spowodowany zapewne globalnym kryzysem finansowych, którego szczyt przypadł na lata $2008-2009$. Sytuacja na rynku stabilizuje się dopiero w okolicach $2010$ roku. Ponadto obserwujemy również sezonowość kwartalną - na początku prawie każdego roku wzrost do połowy roku, a potem spadek. Amplituda wahań sezonowych nie wydaje się być stała.
+
+Obecność trendu powoduje brak stałej średniej, a sezonowość regularne cykle naruszające stacjonarność. Brak stałości amplitudy natomiast niestabilność wariancji. Możemy zatem stwierdzić, że szereg `euretail` nie jest szeregiem stacjonarnym. Dokładniejszych badań dokonamy po podziale danych na zbiór uczący i testowy.
+
+\newpage
+
+### Podział na zbiór uczący i testowy
+
+Podzielimy teraz nasze dane na zbiór uczący i testowy w taki sposób, aby w zbiorze testowym znajdowało się ostatnich $12$ kwartałów. 
+
+```{r dane2.podział, fig.cap="\\label{fig:dane2.podział}Wykres przedstawiający podział danych euretail na zbiór uczący (kolor niebieski) i testowy (kolor czerwony)."}
+set.seed(772)
+uczący <- window(dane2, end = c(2008, 4))
+testowy <- window(dane2, start = c(2009, 1))
+h <- length(testowy) # długość horyzontu prognozy
+
+autoplot(uczący, series = "Zbiór uczący", color = "blue") +
+  autolayer(testowy, series = "Zbiór testowy", color = "red") +
+  labs(title = "Podział danych euretail",
+       x = "Rok",
+       y = "Wartość indeksu")
+```
+
+W dalszej części sprawozdania będziemy przekształcać zbiór (szereg) uczący. 
+
+\newpage
+
+## Stacjonarność szeregu uczącego
+
+Zanim zaczniemy dopasowywać modele do naszego szeregu uczącego, musimy doprowadzić go do postaci stacjonarnej.
+
+```{r uczący.wykres, fig.cap="\\label{fig:uczący.wykres}Wykresy dla zbioru uczącego: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz autokorelacji cząstkowej PACF (dół-prawo)."}
+ggtsdisplay(uczący, main = "Analiza szeregu uczącego")
+```
+
+Jak zasugerowałyśmy wcześniej, nasze dane nie są szeregiem stacjonarnym. Wykresy ACF oraz PACF (\ref{fig:uczący.wykres}) potwierdzają to przypuszczenie:
+
+  * dodatnie, powoli zanikające wartości funkcji ACF = deterministyczna składowa trendu w danych,
+  * duża, bliska $1$ wartość funkcji PACF dla opóźnienia $h = 1$ = obceność silnego trendu wzrostowego w danych.
+  
+Żaden z dwóch dolnych wykresów nie sugeruje obecności sezonowości w danych. Może być to spowodowane tym, że trend jest na tyle silny, że jak narazie nie widać efektu sezonowego.
+
+\newpage
+
+### Transformacja Boxa-Coxa
+
+Korzystając z funkcji `BoxCox.lambda` dla zbioru uczącego, sprawdzamy, czy transformacja Boxa-Coxa, stabilizująca wariancję naszego szeregu, jest potrzebna. Wynik $\lambda \neq 1$ sugeruje potrzebę zastosowania transformacji z podaną wartością $\lambda$.
+
+```{r box.cox.lambda}
+set.seed(772)
+lambda <- BoxCox.lambda(uczący, "loglik")
+```
+
+Dla naszego szeregu dostajemy $\lambda = `r lambda`$, zatem stosujemy transformację Boxa-Coxa z tą wartością parametru.
+
+```{r box.cox}
+set.seed(772)
+uczący.bc <- BoxCox(uczący, lambda = lambda)
+```
+
+
+```{r box.cox.wykres, fig.cap="\\label{fig:uczący.wykres}Wykresy dla zbioru uczącego po zastosowaniu transformacji Boxa-Coxa z parametrem $\\lambda = 2$: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz autokorelacji cząstkowej PACF (dół-prawo)."}
+ggtsdisplay(uczący.bc, main = "Analiza szeregu uczącego po zastosowaniu transformacji Boxa-Coxa")
+```
+
+Porównując wykres \ref{fig:box.cox.wykres} oraz wykres \ref{fig:uczący.wykres}, zastosowanie transformacji Boxa-Coxa z parametrem $\lambda = `r lambda`$ nie wpłynęło zauważalnie na strukturę funkcji ACF i PACF. Nadal na pierwszym planie jest wyraźny trend wzrostowy.
+
+W dalszej części sprawozdania analizie będziemy poddawać stransformowane dane.
+
+\newpage
+
+### Różnicowanie
+
+Aby usunąć trend z naszych danych zastosujemy różnicowanie. Skorzystamy z funkcji `ndiffs`, która pozwoli wyznaczyć sugerowaną liczbę potrzebnych różnicowań z opóźnieniem $1$.
+
+```{r ndiffs}
+set.seed(772)
+d <- ndiffs(uczący.bc)
+```
+
+Wykonujemy $d = `r d`$ różnicowań z opóźnieniem $1$.
+
+```{r diff}
+set.seed(772)
+uczący.d1 <- diff(uczący.bc, lag = 1)
+```
+
+
+```{r diff.wykres, fig.cap="\\label{fig:diff.wykres}Wykresy dla zbioru uczącego Boxa-Coxa po zastosowaniu różnicowania z opóźnieniem $d = 1$: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz autokorelacji cząstkowej PACF (dół-prawo)."}
+ggtsdisplay(uczący.d1, main = "Analiza szeregu uczącego po różnicowaniu d = 1")
+```
+
+Jak widać na wykresach \ref{fig:diff.wykres} trend został skutecznie usunięty. Odsłoniło to nowe informacje o naszym szeregu. Na wykresie funkcji ACF widać cykliczne zanikanie i wystające słupki dla opóźnień $4, 8, 12$ i $16$ (dodatnia korelacja kwartalna) oraz $2, 6, 10$ i $14$ (ujemna korelacja w drugim kwartale) - obecność sezonowości kwartalnej.
+
+```{r s}
+s <- 4 # opóźnienie różnicowania
+```
+
+
+Stosujemy funkcję `nsdiffs`, która pozwoli na wyznaczenie sugerowanej liczby różnicowań sezonowych z opóźnieniem `r s`.
+
+```{r nsdiffs}
+set.seed(772)
+D <- nsdiffs(uczący.d1)
+```
+
+Robimy zatem $D = `r D`$ różnicowań z opóźnieniem sezonowym $s = `r s`$.
+
+```{r diff.s}
+set.seed(772)
+uczący.d1.D1 <- diff(uczący.d1, lag = 4)
+```
+
+```{r diff.wykres.s, fig.cap="\\label{fig:diff.wykres.s}Wykresy dla zbioru uczącego Boxa-Coxa po zastosowaniu różnicowania z opóźnieniem $d = 1$, $D = 1$ oraz $s = 4$: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz autokorelacji cząstkowej PACF (dół-prawo)."}
+ggtsdisplay(uczący.d1.D1, main = "Analiza szeregu uczącego po różnicowaniu d = 1 oraz D = 1")
+```
+
+Jak widać na wykresach \ref{fig:diff.wykres.s} sezonowość została skutecznie usunięta.
+
+Możemy teraz swobodnie dobrać rzędy modeli ruchomej średniej oraz autoregresji.
+
+
+### Model MA(q)
+
+Rząd modelu ruchomej średniej identyfikujemy jako opóźnienie dla ostatniej statystycznie istotnej wartości funkcji autokorelacji ACF. Z wykresu \ref{fig:diff.wykres.s} mamy $q = 4$.
+
+### Model AR(p)
+
+Rząd modelu autoregresji identyfikujemy jako opóźnienie dla ostatniej statystycznie istotnej wartości wykresie funkcji autokorelacji PACF. Z wykresu \ref{fig:diff.wykres.s} mamy $p = 4$.
+
+\newpage
+
+## Modele (S)ARIMA
+
+Dopasowywanie modeli do danych zaczynamy od modeli (S)ARIMA.
+
+### Dryf
+
+W przypadku modeli (S)ARIMA ważne jest, by sprawdzić wartość średniej szeregu. Pozwala to stwierdzić, czy warto uwzględnić dryf w modelu.
+
+```{r średnia}
+średnia <- mean(uczący.d1.D1)
+```
+
+Średnia szeregu uczącego Boxa-Coxa po zastosowaniu różnicowania z opóźnieniem $d = 1$, $D = 1$ oraz $s = 4$ wynosi `r średnia`. Jest to wartość różna od zera, co sugeruje możliwość uwzględnienia dryfu w naszych modelach. W dokumentacji funkcji `Arima` z pakietu `forecast`, którą posłużymy się do tworzenia modeli, znajdujemy informację, że jeśli zastosowano więcej niż jedno różnicowanie (tak, jak w naszym przypadku), to dryf nie zostanie uwzględniony niezależnie od ustawień. Tworzymy zatem modele bez dryfu.
+
+### Model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$
+
+Budujemy model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$ z parametrem $\lambda = `r lambda`$.
+
+```{r modele.ma, echo=TRUE}
+set.seed(772)
+model.ma <- Arima(uczący,
+                  order = c(0, d, 4),
+                  seasonal = list(order = c(0, D, 0), period = 4),
+                  lambda = lambda)
+model.ma
+```
+
+#### Istotność współczynników
+
+Sprawdzamy teraz istotność współczynników tego modelu.
+
+```{r model.ma.co.istotne, echo=FALSE}
+lmtest::coeftest(model.ma)
+```
+
+Współczynniki statystycznie istotne to `ma2`, `ma3` oraz `ma4`. Tworzymy zatem model uwzględniający tylko te zmienne.
+
+\newpage
+
+```{r model.ma.istotny, echo=FALSE}
+ma.fixed <- numeric(4)
+ma.fixed[2] <- NA
+ma.fixed[3] <- NA
+ma.fixed[4] <- NA
+
+set.seed(772)
+
+model.ma.istotny <- Arima(uczący,
+                          order = c(0, d, 4),
+                          seasonal = list(order = c(0, D, 0), period = 4),
+                          lambda = lambda,
+                          fixed = ma.fixed)
+
+model.ma.istotny
+```
+
+Sprawdzamy, którym model wypadł lepiej.
+
+```{r ma.porównanie, tab.cap="\\label{fig:arima.tab}Tabela porównująca wartości kryteriów informacyjnych AIC, AICc i BIC dla modelu SARIMA$(0, 1, 4)(0, 1, 0)_4$ oraz jego wersji z istotnymi współczynnikami."}
+AIC.ma <- c(model.ma$aic, model.ma.istotny$aic)
+AICc.ma <- c(model.ma$aicc, model.ma.istotny$aicc)
+BIC.ma <- c(model.ma$bic, model.ma.istotny$bic)
+
+tabelka.ma <- data.frame(Model = c("SARIMA(0,1,4)(0,1,0)[4]", "SARIMA(0,1,4)(0,1,0)[4] istotny"),
+                         AIC = AIC.ma,
+                         AICc = AICc.ma,
+                         BIC = BIC.ma)
+
+kable(tabelka.ma)
+```
+
+Według kryteriów AIC i AICc model istotny jest minimalnie gorszy od zwykłego modelu. Wybieramy zatem podstawowy model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu SARIMA$(0, 1, 4)(0, 1, 0)_{4}$ przeprowadzimy analizę reszt.
+
+```{r reszty.ma, fig.cap="\\label{fig:reszty.ma}Wykresy dla szeregu reszt modelu SARIMA$(0, 1, 4)(0, 1, 0)_4$: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.ma.istotny)
+```
+
+Wartość poziomu krytycznego wskazuje, że nie ma podstaw do odrzucenia hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:reszty.ma} również to potwiedza - brak istotnej autokorelacja. Model jest dobrze dopasowany do danych.
+
+\newpage
+
+### Model SARIMA$(4, 1, 0)(0, 1, 0)_{4}$
+
+Budujemy model SARIMA$(4, 1, 0)(0, 1, 0)_{4}$ z parametrem $\lambda = `r lambda`$.
+
+```{r model.ar, echo=TRUE}
+set.seed(772)
+model.ar <- Arima(uczący,
+                  order = c(4, d, 0),
+                  seasonal = list(order = c(0, D, 0), period = 4),
+                  lambda = lambda)
+model.ar
+```
+
+#### Istotność współczynników
+
+Sprawdamy teraz istotność współczynników tego modelu.
+
+```{r model.ar.co.istotne, echo=FALSE}
+lmtest::coeftest(model.ar)
+```
+
+Jedynym współczynnikiem statystycznie istotnym jest `ar4`. Tworzymy zatem model uwzględniający tylko tą zmienną.
+
+\newpage
+
+```{r model.ar.istotny, echo=FALSE}
+ar.fixed <- numeric(4)
+ar.fixed[4] <- NA
+
+set.seed(772)
+
+model.ar.istotny <- Arima(uczący,
+                          order = c(4, d, 0),
+                          seasonal = list(order = c(0, D, 0), period = 4),
+                          lambda = lambda,
+                          fixed = ar.fixed)
+
+model.ar.istotny
+```
+
+Sprawdzamy, którym model wypadł lepiej.
+
+```{r ar.porównanie, tab.cap="\\label{fig:arima.tab}Tabela porównująca wartości kryteriów informacyjnych AIC, AICc i BIC dla modelu SARIMA$(4, 1, 0)(0, 1, 0)_4$ oraz jego wersji z istotnymi współczynnikami."}
+AIC.ar <- c(model.ar$aic, model.ar.istotny$aic)
+AICc.ar <- c(model.ar$aicc, model.ar.istotny$aicc)
+BIC.ar <- c(model.ar$bic, model.ar.istotny$bic)
+
+tabelka.ar <- data.frame(Model = c("SARIMA(4,1,0)(0,1,0)[4]",
+                                   "SARIMA(4,1,0)(0,1,0)[4] istotny"),
+                         AIC = AIC.ar,
+                         AICc = AICc.ar,
+                         BIC = BIC.ar)
+
+kable(tabelka.ar)
+```
+
+Model SARIMA$(4, 1, 0)(0, 1, 0)_{4}$ istotny okazał się lepszy według wszystkich kryteriów informacyjnych.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu SARIMA$(4, 1, 0)(0, 1, 0)_{4}$ istotnego przeprowadzimy analizę reszt.
+
+```{r reszty.ar, fig.cap="\\label{fig:reszty.ar}Wykresy dla szeregu reszt modelu SARIMA$(4, 1, 0)(0, 1, 0)_4$ istotnego: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.ar.istotny)
+```
+
+Wartość poziomu krytycznego wskazuje, że nie ma podstaw do odrzucenia hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:reszty.ar} również to potwiedza - brak istotnej autokorelacja. Model jest dobrze dopasowany do danych.
+
+\newpage
+
+### Model automatyczny
+
+Budujemy model, korzytając z funkcji `auto.arima()` z argumentem $\lambda = `r lambda`$.
+
+```{r model.auto, echo=TRUE, cache=TRUE}
+set.seed(772)
+model.auto <- auto.arima(uczący,
+                         lambda = lambda,
+                         stepwise = FALSE)
+model.auto
+```
+
+Automatycznie dopasowany model to SARIMA$(1,0,3)(0,1,1)_4$. 
+
+#### Istotność współczynników
+
+Sprawdzamy teraz istotność współczynników tego modelu.
+
+```{r model.auto.co.istotne, echo=FALSE}
+lmtest::coeftest(model.auto)
+```
+
+Współczynniki statystycznie istotne to `ar1`, `ma1`, `ma3` i `sma1`. Tworzymy zatem model uwzględniający tylko te zmienne.
+
+\newpage
+
+```{r model.auto.istotny, echo=FALSE}
+auto.fixed <- numeric(4)
+auto.fixed[1] <- NA
+auto.fixed[2] <- NA
+auto.fixed[4] <- NA
+auto.fixed[5] <- NA
+
+set.seed(772)
+
+model.auto.istotny <- Arima(uczący,
+                          order = c(1, 0, 3),
+                          seasonal = list(order = c(0, 1, 1), period = 4),
+                          lambda = lambda,
+                          fixed = auto.fixed)
+
+model.auto.istotny
+```
+
+Sprawdżmy, którym model wypadł lepiej.
+
+```{r auto.porównanie, tab.cap="\\label{fig:auto.porównanie}Tabela porównująca wartości kryteriów informacyjnych AIC, AICc i BIC dla modelu SARIMA$(1, 0, 3)(0, 1, 1)_4$ oraz jego wersji z istotnymi współczynnikami."}
+AIC.auto <- c(model.auto$aic, model.auto.istotny$aic)
+AICc.auto <- c(model.auto$aicc, model.auto.istotny$aicc)
+BIC.auto <- c(model.auto$bic, model.auto.istotny$bic)
+
+tabelka.auto <- data.frame(Model = c("SARIMA(1,0,3)(0,1,1)[4]", "SARIMA(1,0,3)(0,1,1)[4] fixed"),
+                         AIC = AIC.auto,
+                         AICc = AICc.auto,
+                         BIC = BIC.auto)
+
+kable(tabelka.auto)
+```
+
+Model istotny SARIMA$(1,0,3)(0,1,1)_{4}$ okazał się lepszy według wszystkich kryteriów informacyjnych.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu istotnego SARIMA$(1,0,3)(0,1,1)_{4}$ przeprowadzamy analizę reszt.
+
+```{r reszty.auto, fig.cap="\\label{fig:reszty.auto}Wykresy dla szeregu reszt modelu SARIMA$(1, 0, 3)(0, 1, 1)_4$ istotnego: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.auto.istotny)
+```
+
+Wartość poziomu krytycznego wskazuje, że nie ma podstaw do odrzucenia hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:reszty.auto} również to potwiedza - brak istotnej autokorelacja. Model jest dobrze dopasowany do danych.
+
+\newpage
+
+### Porównanie
+
+Na koniec porównamy wartości wszystkich kryteriów informacyjnych AIC, AICc i BIC dla wybranych lepszych modeli SARIMA. Postaramy się wybrać najlepszy z tej grupy modeli, który potem użyjemy do prognozowania naszego szeregu.
+
+```{r arima.tab, tab.cap="\\label{fig:arima.tab}Tabela porównująca wartości kryteriów informacyjnych AIC, AICc i BIC dla stworzonych modeli (S)ARIMA."}
+AIC.arima <- c(model.ma$aic, model.ar.istotny$aic, model.auto$aic)
+AICc.arima <- c(model.ma$aicc, model.ar.istotny$aicc, model.auto$aicc)
+BIC.arima <- c(model.ma$bic, model.ar.istotny$bic, model.auto$bic)
+
+tabelka.arima <- data.frame(Model = c("SARIMA(0,1,4)(0,1,0)[4]",
+                                   "SARIMA(4,1,0)(0,1,0)[4] fixed",
+                                   "SARIMA$(2,0,0)(1,1,0)[4]$"),
+                         AIC = AIC.arima,
+                         AICc = AICc.arima,
+                         BIC = BIC.arima)
+
+kable(tabelka.arima)
+```
+
+Jak widać w tabeli \ref{fig:arima.tab} według wszystkich kryteriów informacyjnych najlepszy okazał się model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$.
+
+
+
+## Modele dekompozycji
+
+Teraz dopasujemy model oparty na dekompozycji. Skorzystamy w tym celu z funkcji `tslm`.
+
+### Model dekompozycji z trendem liniowym
+
+Zaczynamy od modeli dekompozycji z trendem liniowym.
+
+```{r model.lin, echo=TRUE}
+set.seed(772)
+model.lin <- tslm(uczący ~ trend)
+sum.model.lin <- summary(model.lin)
+sum.model.lin
+```
+
+
+Wartość współczynnika determinacji $R^2$ wynosi `r round(sum.model.lin$r.squared, 4)`, co sugeruje, że model wyjaśnia `r round(sum.model.lin$r.squared, 4) * 100` $\%$ zmienności naszych danych. Wartość poziomu krytycznego sugeruje, że parametr trendu jest statystycznie istotny w tym modelu.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu dekompozycji z trendem liniowym przeprowadzimy analizę reszt.
+
+```{r model.lin.reszty, fig.cap="\\label{fig:reszty.lin}Wykresy dla szeregu reszt modelu dekompozycji z trendem liniowym: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.lin)
+```
+
+Wartość poziomu krytycznego wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:reszty.lin} również to potwiedza - występuje istotna autokorelacja. Zatem model nie jest tak dobry, jak wydawało się na początku.
+
+\newpage
+
+### Model dekompozycji z trendem liniowym i sezonowością
+
+Wiemy, że w naszych danych poza deterministycznym trendem wzrostowym obecna jest również sezonowość. Tworzymy zatem model z trendem liniowym oraz sezonowością.
+
+```{r model.lin.sez}
+set.seed(772)
+model.lin.sez <- tslm(uczący ~ season + trend)
+sum.model.lin.sez <- summary(model.lin.sez)
+sum.model.lin.sez
+```
+
+Wartość współczynnika determinacji $R^2$ wzrosła nieznacznie do poziomu `r round(sum.model.lin.sez$r.squared, 4)`, co sugeruje, że model wyjaśnia `r round(sum.model.lin.sez$r.squared, 4) * 100` $\%$ zmienności naszych danych. Analiza istotności parametrów wskazuje jednak, że tylko parametr trendu jest statystycznie istotny. Skorygowany współczynnik determinacji (`Adjusted` $R^2$) spadł z poziomu `r round(sum.model.lin$adj.r.squared, 4)` do `r round(sum.model.lin.sez$adj.r.squared, 4)`, co potwierdza dodanie statystycznie nieistotnych zmiennych do modelu. 
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu dekompozycji z trendem liniowym i sezonowością przeprowadzimy analizę reszt.
+
+```{r model.lin.sez.reszty, echo=FALSE, fig.cap="\\label{fig:model.lin.sez.reszty}Wykresy dla szeregu reszt modelu dekompozycji z trendem liniowym i sezonowością: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.lin.sez)
+```
+
+
+Wartość poziomu krytycznego wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Jego wartość jest jednak wyższa niż w przypadku modelu tylko z trendem liniowym. Analiza wykresu ACF \ref{fig:model.lin.sez.reszty} potwiedza występowanie istotnej autokorelacja. Ponadto histogram znacząco odbiega od gęstości rozkładu normalnego. Model nie jest dobry.
+
+\newpage
+
+### Model dekompozycji z trendem kwadratowym
+
+Skoro dodanie sezonowości nie poprawiło jakości naszego modelu, spróbujemy zmienić postać trendu z liniowej na kwadratową.
+
+```{r model.kwa}
+set.seed(772)
+model.kwa <- tslm(uczący ~ trend + I(trend^2))
+sum.model.kwa <- summary(model.kwa)
+sum.model.kwa
+```
+
+Wartość współczynnika determinacji $R^2$ wzrosła do poziomu `r round(sum.model.kwa$r.squared, 4)`, co sugeruje, że model wyjaśnia `r round(sum.model.kwa$r.squared, 4) * 100` $\%$ zmienności naszych danych. Analiza istotności parametrów wskazuje, że parametry obu trednów są statystycznie istotne. Skorygowany współczynnik determinacji (`Adjusted` $R^2$) wzórsł z poziomu `r round(sum.model.lin$adj.r.squared, 4)` w modelu jedynie z trendem liniowym do `r round(sum.model.kwa$adj.r.squared, 4)`, co potwierdza dodanie statystycznie istotnych zmiennych do modelu.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności dekompozycji z trendem kwadratowym przeprowadzimy analizę reszt.
+
+```{r model.kwa.reszty, fig.cap="\\label{fig:model.kwa.reszty}Wykresy dla szeregu reszt modelu dekompozycji z trendem kwadratowym: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.kwa)
+```
+
+Wartość poziomu krytycznego nadal wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu, jednak jego wartość znacznie wzrosła. Analiza wykresu ACF \ref{fig:model.kwa.reszty} potwiedza występowanie istotnej autokorelacja. Model wydaje się być lepszy od poprzednich.
+
+\newpage
+
+### Model dekompozycji z trendem kwadratowym i sezonowością
+
+Spróbujmy jeszcze raz dodać sezonowość, tym razem do modelu z trendem kwadratowym.
+
+```{r model.kwa.sez}
+set.seed(772)
+model.kwa.sez <- tslm(uczący ~ season + trend + I(trend^2))
+sum.model.kwa.sez <- summary(model.kwa.sez)
+sum.model.kwa.sez
+```
+
+Wartość współczynnika determinacji $R^2$ nieznacznie wzrosła do poziomu `r round(sum.model.kwa.sez$r.squared, 4)`, co sugeruje, że model wyjaśnia `r round(sum.model.kwa.sez$r.squared, 4) * 100` $\%$ zmienności naszych danych. Analiza istotności parametrów wskazuje, że poza parametrami obu trednów statystycznie istotny jest również parametr `season3`. Skorygowany współczynnik determinacji (`Adjusted` $R^2$) również nieznacznie wzórsł z poziomu `r round(sum.model.kwa$adj.r.squared, 4)` w modelu jedynie z trendem kwadratowym do `r round(sum.model.kwa.sez$adj.r.squared, 4)`, co potwierdza dodanie statystycznie istotnych zmiennych do modelu.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności dekompozycji z trendem kwadratowym i sezonowością przeprowadzimy analizę reszt.
+
+```{r model.kwa.sez.reszty, echo=FALSE, fig.cap="\\label{fig:model.kwa.sez.reszty}Wykresy dla szeregu reszt modelu dekompozycji z trendem kwadratowymi sezonowością: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.kwa.sez)
+```
+
+Wartość poziomu krytycznego nadal wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.kwa.sez.reszty} potwiedza występowanie istotnej autokorelacja.
+
+\newpage
+
+### Model dekompozycji z trendem sześciennym i sezonowością
+
+Na koniec stworzymy jeszcze model z trendem sześciennym i sezonowością. Nie poprawi to sytuacji z białoszumowością reszt, ale może pozwoli na lepsze dopasowanie trendu do danych.
+
+```{r model.sze.sez}
+set.seed(772)
+model.sze.sez <- tslm(uczący ~ season + trend + I(trend^2) + I(trend^3))
+sum.model.sze.sez <- summary(model.sze.sez)
+sum.model.sze.sez
+```
+
+Wartość współczynnika determinacji $R^2$ wzrosła do poziomu `r round(sum.model.sze.sez$r.squared, 4)`, co sugeruje, że model wyjaśnia `r round(sum.model.sze.sez$r.squared, 4) * 100` $\%$ zmienności naszych danych. Analiza istotności parametrów wskazuje, poza parametrami trednu liniowego oraz sześciennego statystycznie istotne są również parametrt `season3` i `season4`. Skorygowany współczynnik determinacji (`Adjusted` $R^2$) nieznacznie wzórsł z poziomu `r round(sum.model.kwa.sez$adj.r.squared, 4)` w modelu jedynie z trendem kwadratowym do `r round(sum.model.sze.sez$adj.r.squared, 4)`, co potwierdza dodanie statystycznie istotnych zmiennych do modelu. Przeprowadzimy jeszcze analizę reszt.
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności dekompozycji z trendem sześciennym i sezonowością przeprowadzimy analizę reszt.
+
+```{r model.sze.sez.reszty, echo=FALSE, fig.cap="\\label{fig:model.sze.sez.reszty}Wykresy dla szeregu reszt modelu dekompozycji z trendem sześciennym i sezonowością: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.sze.sez)
+```
+
+Tak jak przypuszczałyśmy, wartość poziomu krytycznego nadal wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.sze.sez.reszty} potwiedza występowanie autokorelacja. Natomiast histogram reszt lepiej dopasowuje się do krzywej gęstości rozkładu normalnego. Wybieramy ten model, jako najlepszy model dekompozycji.
+
+\newpage
+
+## Algorytmy wygładzenia wykładniczego
+
+Idea tych algorytmów opiera się na przypisaniu obserwacjom ze zbioru uczącego wykładniczo zanikających wag. Modele te służą odrazu do tworzenia prognoz dla zadanych danych. Zatem w tej części raportu jedynie stworzymy nasze modele, a dopiero później przyjrzymy się prognozom. 
+
+Na podstawie porównania wartości kryteriów informacyjnych wybierzemy model najlepiej dopasowany dla naszych danych.
+
+### Proste wygładzenie wykładnicze (algorytm SES)
+
+Algorytm stosowany jest dla szeregów bez wyraźnego trendu i sezonowości. W danych `euretail` obecne są oba te paramtery, więc stworzymy ten model jedynie kontrolnie.
+
+```{r model.ses, echo=TRUE}
+set.seed(772)
+model.ses <- ses(uczący, h = h, initial = "simple")
+```
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności algorytmu SES przeprowadzimy analizę reszt.
+
+```{r model.ses.reszty, echo=FALSE, fig.cap="\\label{fig:model.ses.reszty}Wykresy dla szeregu reszt modelu SES: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.ses)
+```
+
+Wartość poziomu krytycznego wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.ses.reszty} również to potwiedza - występuje istotna autokorelacja. Możemy również zaobserwować sezonowość reszt tego modelu. Tak jak wspominałyśmy model ten nie jest odpowiedni dla tych danych.
+
+
+### Algorytm Holta
+
+Metoda stosowana jest dla szeregów z wyraźnym trendem, ale bez sezonowości. W danych `euretail` sezonowość jest obecna, więc stworzymy ten model kontrolnie w dwóch wariantach:
+
+  * z domyślnym parametrem trendu,
+  * z trendem tłumionym.
+
+\newpage
+
+### Domyślny model Holta
+
+```{r model.holt, echo=TRUE}
+set.seed(772)
+model.holt <- holt(uczący, h = h)
+```
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu Holta z domyślnym parametrem trendu przeprowadzimy analizę reszt.
+
+```{r model.holt.reszty, fig.cap="\\label{fig:model.holt.reszty}Wykresy dla szeregu reszt domyślnego modelu Holta: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.holt)
+```
+
+Wartość poziomu krytycznego wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.holt.reszty} również to potwiedza - występuje istotna autokorelacja. Możemy również zaobserwować sezonowość reszt tego modelu. Tak, jak wspominałyśmy, model ten nie jest odpowiedni dla tych danych.
+
+\newpage
+
+### Model Hotla z trendem tłumionym
+
+```{r model.holta.d, echo=TRUE}
+set.seed(772)
+model.holt.d <- holt(uczący, h = h, damped = TRUE)
+```
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu Holta z trendem tłumionym przeprowadzimy analizę reszt.
+
+```{r model.holt.d.reszty, echo=FALSE, fig.cap="\\label{fig:model.holt.d.reszty}Wykresy dla szeregu reszt modelu Holta z trendem tłumionym: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.holt.d)
+```
+
+Wartość poziomu krytycznego wskazuje na odrzucenie hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.holt.reszty} również to potwiedza - występuje istotna autokorelacja. Możemy również zaobserwować sezonowość reszt tego modelu. Tak, jak wspominałyśmy, model ten nie jest odpowiedni dla tych danych i wypada gorzej niż model z domyślnym parametrem trendu.
+
+
+### Algorytm Holta-Wintersa
+
+Metoda stosowana jest dla szeregów z wyraźnym trendem i sezonowością. W danych `euretail` obecne są oba te parametry, więc możemy już teraz przypuszczać, że ten algorytm będzie najlepszy. Stworzymy dwa warianty tej metody:
+
+  * z sezonowością addytywną,
+  * z sezonowością multiplikatywną.
+  
+
+
+### Model Holta-Wintersa z sezonowością addytywną
+
+```{r model.hw.add, echo=TRUE}
+set.seed(772)
+model.hw.add <- hw(uczący, seasonal = "additive", h = h)
+```
+
+\newpage
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu Holta-Wintersa z sezonowością addytywną przeprowadzimy analizę reszt.
+
+```{r model.hw.add.reszty, echo=FALSE, fig.cap="\\label{fig:model.hw.add.reszty}Wykresy dla szeregu reszt modelu Holta-Wintersa z sezonowością addytywną: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.hw.add)
+```
+
+Wartość poziomu krytycznego wskazuje na brak podstaw do odrzucenia hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.hw.add.reszty} również to potwiedza - brak istotnej autokorelacji. Dopasowanie histogramu do krzywej gęstości rozkładu normalnego sugeruje rozkład normalny reszt.
+
+\newpage
+
+### Model Holta-Wintersa z sezonowością multiplikatywną
+
+```{r model.hw.mult, echo=TRUE}
+set.seed(772)
+model.hw.mult <- hw(uczący, seasonal = "multiplicative", h = h)
+```
+
+#### Diagnostyka
+
+W celu weryfikacji poprawności modelu Holta-Wintersa z sezonowością multiplikatywną przeprowadzimy analizę reszt.
+
+```{r model.hw.mult.reszty, echo=FALSE, fig.cap="\\label{fig:model.hw.mult.reszty}Wykresy dla szeregu reszt modelu Holta-Wintersa z sezonowością multiplikatywną: szereg czasowy (góra), funkcja autokorelacji ACF (dół-lewo) oraz histogram z krzywą gęstości rozkładu normalnego (dół-prawo)."}
+set.seed(772)
+checkresiduals(model.hw.mult)
+```
+
+Wartość poziomu krytycznego wskazuje na brak podstaw do odrzucenia hipotezy o białoszumowości reszt tego modelu. Analiza wykresu ACF \ref{fig:model.hw.mult.reszty} również to potwiedza - brak istotnej autokorelacji. Dopasowanie histogramu do krzywej gęstości rozkładu normalnego sugeruje rozkład normalny reszt.
+
+\newpage
+
+### Model automatyczny
+
+Skorzystamy z funkcji `ets`, która automatycznie dobierze model ETS (opcja `model = "ZZZ"`) do naszych danych. Algorytm na podstawie kryterium AICc wskaże optymalny model, sprawdzając każdą dostępną opcję.
+
+```{r model.ets}
+set.seed(772)
+model.ets <- ets(uczący)
+```
+
+Wybrany w ten sposób model to `r model.ets$method`. Jest to dokładnie to ten sam model co algorytm Holta-Wintersa z sezonowością addytywną. Nie będziemy zatem poddawać modelu automatycznego dalszym analizom.
+
+
+### Porównanie
+
+Porównamy teraz wartości kryteriów informacyjnych AIC, AICc i BIC dla modelu Holta-Wintersa z:
+
+  * sezonowością addytywną,
+  * sezonowością multiplikatywną.
+  
+Postaramy się wybrać najlepszy model.
+
+```{r tabela.exp, tab.cap="\\label{fig:tabela.exp}Tabela porównująca wartości kryteriów informacyjnych AIC, AICc i BIC dla algorytmów Holta-Wintersa z sezonowością addytywną i multiplikatywną."}
+AIC.exp <- c(model.hw.add$model$aic, model.hw.mult$model$aic)
+AICc.exp <- c(model.hw.add$model$aicc, model.hw.mult$model$aicc)
+BIC.exp <- c(model.hw.add$model$bic, model.hw.mult$model$bic)
+
+tabela.exp <- data.frame(Model = c("Holt-Winters add.", "Holt-Winters mult."),
+                         AIC  = AIC.exp,
+                         AICc = AICc.exp,
+                         BIC  = BIC.exp)
+kable(tabela.exp)
+```
+
+Wartości wszystkich kryteriów informacyjnych (tabela \ref{fig:tabela.exp}) wskazują, że algorytm Holta-Wintersa z sezonowością addytywną jest najlepiej dopasowany do naszych danych. Wykorzystamy zatem ten algorytmy do tworzenia prognoz naszego szeregu.
+
+\newpage
+
+## Prognozowanie
+
+Wyznaczymy teraz prognozy dla zbioru testowego na podstawie dopasowanych modeli:
+
+  * SARIMA$(0, 1, 4)(0, 1, 0)_{4}$, 
+  * model dekompozycji z trendem sześciennym i sezonowością,
+  * algorytm Holta-Wintersa z sezonowością addytywną
+  
+oraz wybranej metody referencyjnej - sezonowej metody naiwnej, przyjmującej wartości z odpowiadającego kwartału poprzedniego roku.
+  
+Skonstruowane prognozy przedstawimy na wykresie i porównany z wartościami rzeczywistymi ze zbioru testowego. Na koniec porównamy dokładność prognoz dla zbioru testowego i uczącego z uwzględnieniem wybranych miar oceny dokładności.
+
+
+### Funkcja `prognoza`
+
+Tworzymy pomocniczą funkcję `prognoza`, przyjmującą argumenty:
+
+  * `model` - zadany model, na podstawie którego będziemy prognozować (domyślnie `NULL`),
+  * `zbiór.uczący` - zbiór uczący (domyślnie `NULL`, ponieważ argument jest potrzebny jedynie w przypadku metod naiwnych),
+  * `zbiór.testowy` - zbiór.testowy, do którego będziemy porównywać naszą prognozę,
+  * `opóźnienie` - horyzont prognozy - liczba okresów, dla których wyznaczana jest prognoza (domyślnie długość zbioru testowego),
+  * `naiwna` - parametr decydujący o tworzeniu prognozy dla metody naiwnej (domyślnie `FALSE`),
+  * `naiwna.sezon` -parametr decydujący o tworzeniu prognozy dla sezonowej metody naiwnej (domyślnie `FALSE`),
+  * `wykres` - parametr decydujący o wygenerowaniu wykresu porównującego prognozę z wartościami rzeczywistymi (domyślnie `FALSE`),
+  * `error` - parametr decydujący o wywołaniu zestawienie dokładności - funkcja `accuracy` z pakietu `forecast` (domyślnie `FALSE`).
+  
+Funkcja tworzy prognozę dla wybranego modelu i w zależności od parametrów `wykres` i `error` zwraca wynik.
+ 
+\newpage 
+
+```{r prognoza, echo=TRUE}
+prognoza <- function(model = NULL, zbiór.uczący = NULL, zbiór.testowy,
+                     opóźnienie = lenght(zbiór.testowy),
+                     naiwna = FALSE, naiwna.sezon = FALSE,
+                     wykres = FALSE, error = FALSE){
+  
+  prognoza <- forecast::forecast(model, h = opóźnienie)
+  
+  if (naiwna == TRUE){
+    prognoza <- naive(x = zbiór.uczący, h = opóźnienie)
+  }
+  
+  if (naiwna.sezon == TRUE){
+    prognoza <- snaive(x = zbiór.uczący, h = opóźnienie)
+  }
+  
+  prognoza.wykres <- autoplot(prognoza) + 
+                     autolayer(zbiór.testowy) +
+                     ggtitle(paste("Prognoza dla modelu:", prognoza$method))
+  prognoza.dokładność <- accuracy(prognoza, zbiór.testowy)
+  
+  if (wykres == TRUE){
+    return(prognoza.wykres)
+  } else if (error == TRUE){
+    return(prognoza.dokładność)
+  } else {
+    return(prognoza)
+  }
+}
+```
+
+
+\newpage
+  
+### Model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$
+
+Prognozowanie zaczynamy od modelu SARIMA$(0, 1, 4)(0, 1, 0)_4$.
+
+```{r model.ma.cast.wykres, echo=FALSE, fig.cap="\\label{fig:model.ma.cast.wykres}Wykres przedstawiający prognozy wyznaczone na podstawie modelu SARIMA$(0, 1, 4)(0, 1, 0)_{4}$ oraz przedziały ufności prognoz ($80\\%$ i $95\\%$). Czerwoną linią zaznaczono rzeczywiste wartości ze zbioru testowego."}
+prognoza(model = model.ma, zbiór.testowy = testowy, opóźnienie = h, wykres = TRUE)
+```
+
+Jak widać na wykresie \ref{fig:model.ma.cast.wykres} model dobrze przewidział tendencję spadkową zapoczątkowaną na końcu zbioru uczącego (granatowa linia). Rzeczywiste wartości indeksu ze zbioru testowego (czerwona linia) w całości mieszczą się w wyznaczonych przedziałach predykcji. Model można uznać za wiarygodny, chociaż wraz ze wzrostem horyzontu prognozy przedziały predykcji rozszerzają się, co sugeruje znaczną niepewność modelu w miarę oddalania się od ostatniej znanej obserwacji.
+
+Przyjrzyjmy się teraz dokładności prognoz tego modelu na podstawie miar oceny dokładności.
+
+\newpage
+
+```{r model.ma.cast.tab, tab.cap="\\label{fig:model.ma.cast.tab}Tabela accuracy przedstawiajaca wartości miar oceny dokładności prognoz dla modelu SARIMA$(0, 1, 4)(0, 1, 0)_{4}$."}
+arima.cast <- prognoza(model = model.ma, zbiór.testowy = testowy, opóźnienie = h, error = TRUE)
+kable(arima.cast)
+```
+
+Jak widać w tabeli \ref{fig:model.ma.cast.tab}, wartości wszystkich miar dokładności są większe dla zbioru testowego niż dla zbioru uczącego. Jest to zdecydowanie dobra wiadomość. Ponadto wartość średniego bezwzględnego błedu procentowego (MAPE) dla zbioru testowego wynosi zaledwie `r round(arima.cast[[10]], 2)` $\%$, co oznacza, że prognozowane wartości indeksu są minimalnie inne niż w rzeczywistości. Wartość średniego błędu bezwzględnego (MAE) wskazuje, że model na zbiorze testowym myli się jedynie o `r round(arima.cast[[6]], 2)` punkta indeksu. Pierwiastek średniego błędu kwadratowego (RMSE) również przyjmuje niewielką wartość na zbiorze testowym (`r round(arima.cast[[4]], 2)`). Średni błąd bezwzględny skalowany (MASE) przyjmuje wartości mniejsze od $1$ dla obu zbiorów, oznacza to, że model jest lepszy od metody naiwnej.
+
+Analiza dokładności naszego modelu wskazuje zatem na bardzo dobrą jakość prognoz, co pokrywa się w wnioskami na podstawie wykresu.
+
+\newpage
+
+### Model dekompozycji z trendem sześciennym i sezonowością
+
+Przetestujemy teraz podejście oparte dekompozycji z trendem sześciennym i sezonowością.
+
+```{r model.sze.sez.cast.wykres, fig.cap="\\label{fig:model.sze.sez.cast.wykres}Wykres przedstawiający prognozy wyznaczone na podstawie modelu dekompozycji z trendem sześciennym i sezonowością oraz przedziały ufności prognoz ($80\\%$ i $95\\%$). Czerwoną linią zaznaczono rzeczywiste wartości ze zbioru testowego."}
+prognoza(model = model.sze.sez, zbiór.testowy = testowy, opóźnienie = h, wykres = TRUE)
+```
+
+Jak widać na wykresie \ref{fig:model.sze.sez.cast.wykres} model okazał się nieodpowiedni do prognozowania w momencie, gdy trend w danych gwałtowanie się zmienia. Zarówno prognoza punktowa, jak i przedziały predykcji, są całkowicie rozbieżne z wartościami rzeczywistymi. Model nie jest wiarygodny. Model ARIMA sprawdził się tu zdecydowanie lepiej - jest bardziej elastyczny i lepiej dopasowuje się do danych.
+
+Przyjrzyjmy się teraz dokładności prognoz tego modelu na podstawie miar oceny dokładności.
+
+\newpage
+
+```{r model.sze.sez.cast.tab, tab.cap="\\label{fig:model.sze.sez.cast.tab}Tabela accuracy przedstawiajaca wartości miar oceny dokładności prognoz dla modelu dekompozycji z trendem sześciennym i sezonowością."}
+regresja.cast <- prognoza(model = model.sze.sez, zbiór.testowy = testowy, opóźnienie = h, error = TRUE)
+kable(regresja.cast)
+```
+
+Jak widać w tabeli \ref{fig:model.sze.sez.cast.tab}, wartości wszystkich miar dokładności są większe dla zbioru testowego niż dla zbioru uczącego. Jest to zdecydowanie dobra wiadomość, jednak błędy na zbiorze testowym są zdecydowanie większe od tych w poprzednim modelu.
+
+Wartość średniego bezwzględnego błedu procentowego (MAPE) dla zbioru testowego wynosi `r round(regresja.cast[[10]], 2)` $\%$, co oznacza, że prognozowane wartości indeksu są inne niż w rzeczywistości. Wartość średniego błędu bezwzględnego (MAE) wskazuje, że model na zbiorze testowym myli się o `r round(regresja.cast[[6]], 2)` punkta indeksu. Pierwiastek średniego błędu kwadratowego (RMSE) znacznie większą wartość na zbiorze testowym (`r round(regresja.cast[[4]], 2)`) niż w poprzednim modelu. Średni błąd bezwzględny skalowany (MASE) przyjmuje wartość większą od $1$ dla zbioru testowego, oznacza to, że model jest gorszy od metody naiwnej.
+
+Analiza dokładności naszego modelu wskazuje zatem na słabą jakość prognoz, co pokrywa się w wnioskami na podstawie wykresu.
+
+\newpage
+
+### Algorytm Holta-Wintersa z sezonowością addytywną
+
+Teraz do skonstruowania prognoz wykorzystamy algorytm Holta-Wintersa z sezonowością addytywną.
+
+```{r model.hw.add.cast.wykres, echo=FALSE, fig.cap="\\label{fig:model.hw.add.cast.wykres}Wykres przedstawiający prognozy oraz przedziały ufności prognoz ($80\\%$ i $95\\%$) wyznaczone na podstawie modelu opartego na algorytmie Holta-Wintersa z sezonowością addytywną. Czerwoną linią zaznaczono rzeczywiste wartości ze zbioru testowego."}
+autoplot(model.hw.add) + 
+        autolayer(testowy) +
+        ggtitle(paste("Prognoza dla modelu: algorytm Holta-Wintersa z sezonowością addytywną"))
+```
+
+Jak widać na wykresie \ref{fig:model.hw.add.cast.wykres} model dobrze przewidział tendencję spadkową zapoczątkowaną na końcu zbioru uczącego (granatowa linia). Rzeczywiste wartości indeksu ze zbioru testowego (czerwona linia) w całości mieszczą się w wyznaczonych przedziałach predykcji, są jednak oddalone od punktowej predykcji. Model można uznać za wiarygodny, chociaż wraz ze wzrostem horyzontu prognozy przedziały predykcji znacząco się rozszerzają, co sugeruje znaczną niepewność modelu w miarę oddalania się od ostatniej znanej obserwacji. Prognoza wygląda na mniej dopasowaną, niż w przypadku modelu (S)ARIMA.
+
+Przyjrzyjmy się teraz dokładności prognoz tego modelu na podstawie miar oceny dokładności.
+
+\newpage
+
+```{r model.hw.add.cast.tab, tab.cap="\\label{fig:model.hw.add.cast.tab}Tabela accuracy przedstawiajaca wartości miar oceny dokładności prognoz dla modelu opartego na algorytmie Holta-Wintersa z sezonowością addytywną."}
+exp.cast <- prognoza(model = model.hw.add, zbiór.testowy = testowy, opóźnienie = h, error = TRUE)
+kable(exp.cast)
+```
+
+Jak widać w tabeli \ref{fig:model.hw.add.cast.tab}, wartości wszystkich miar dokładności są większe dla zbioru testowego niż dla zbioru uczącego. Jest to zdecydowanie dobra wiadomość, jednak błędy na zbiorze testowym są większe od tych w modelu (S)ARIMA.
+
+Wartość średniego bezwzględnego błedu procentowego (MAPE) dla zbioru testowego wynosi `r round(exp.cast[[10]], 2)` $\%$, co oznacza, że prognozowane wartości indeksu są inne niż w rzeczywistości. Wartość średniego błędu bezwzględnego (MAE) wskazuje, że model na zbiorze testowym myli się o `r round(exp.cast[[6]], 2)` punkta indeksu. Pierwiastek średniego błędu kwadratowego (RMSE) również przyjmuje dość małą wartość na zbiorze testowym (`r round(exp.cast[[4]], 2)`). Średni błąd bezwzględny skalowany (MASE) przyjmuje wartość większą od $1$ dla zbioru testowego, oznacza to, że model jest gorszy od metody naiwnej.
+
+Analiza dokładności naszego modelu wskazuje zatem na średnią jakość prognoz, co pokrywa się w wnioskami na podstawie wykresu.
+
+\newpage
+
+### Sezonowa metoda naiwna
+
+Na koniec prognozujemy nasze dane w oparciu o sezonową metodę naiwną.
+
+```{r model.naive.sez.cast.wykres, fig.cap="\\label{fig:model.naive.sez.cast.wykres}Wykres przedstawiający prognozy oraz przedziały ufności prognoz ($80\\%$ i $95\\%$) wyznaczone na podstawie modelu opartego na sezonowej metodzie naiwnej. Czerwoną linią zaznaczono rzeczywiste wartości ze zbioru testowego."}
+prognoza(zbiór.uczący = uczący, zbiór.testowy = testowy, opóźnienie = h, wykres = TRUE, naiwna.sezon = TRUE)
+```
+
+Jak widać na wykresie \ref{fig:model.naive.sez.cast.wykres} model okazał się nieodpowiedni do prognozowania naszych danych. Zarówno prognoza punktowa, jak i przedziały predykcji, są rozbieżne z wartościami rzeczywistymi. Warto zauważyć jednak, że początek i koniec dolnej granicy $95\%$ przedziału predukcyjnego są zbliżone do pierwszej i ostatniej obserwacji w zbiorze testowym odpowiednio. Model nie jest jednak wiarygodny, czego można było się spodziewać, patrząc na ideę tej metody.
+
+Przyjrzyjmy się teraz dokładności prognoz tego modelu na podstawie miar oceny dokładności.
+
+\newpage
+
+```{r model.naive.sez.cast.tab, tab.cap="\\label{fig:model.naive.sez.cast.tab}Tabela accuracy przedstawiajaca wartości miar oceny dokładności prognoz dla modelu opartego na sezonowej metodzie naiwnej."}
+sez.cast <- prognoza(zbiór.uczący = uczący, zbiór.testowy = testowy, opóźnienie = h, naiwna.sezon = TRUE, error = TRUE)
+kable(sez.cast)
+```
+
+
+Jak widać w tabeli \ref{fig:model.naive.sez.cast.tab}, wartości wszystkich miar dokładności są większe dla zbioru testowego niż dla zbioru uczącego. Jest to zdecydowanie dobra wiadomość, jednak błędy na obu zbiorach są zdecydowanie większe od tych w poprzednich modelach.
+
+Wartość średniego bezwzględnego błedu procentowego (MAPE) dla zbioru testowego wynosi `r round(regresja.cast[[10]], 2)` $\%$, co oznacza, że prognozowane wartości indeksu są inne niż w rzeczywistości. Wartość średniego błędu bezwzględnego (MAE) wskazuje, że model na zbiorze testowym myli się o `r round(regresja.cast[[6]], 2)` punkta indeksu. Pierwiastek średniego błędu kwadratowego (RMSE) ma znacznie większą wartość na zbiorze testowym (`r round(regresja.cast[[4]], 2)`) niż w modelu (S)ARIMA czy wykładzenia wykładniczego. Średni błąd bezwzględny skalowany (MASE) przyjmuje wartość większą od $1$ dla zbioru testowego, oznacza to, że model jest gorszy od standardowej metody naiwnej.
+
+Analiza dokładności naszego modelu wskazuje zatem na słabą jakość prognoz, co pokrywa się w wnioskami na podstawie wykresu.
+
+\newpage
+
+## Porównanie
+
+Wybierając optymalny model będzie się kierować analizą dokładności prognoz dla zbioru testowego na podstawie wybranych miar oceny dokładności:
+
+  * RMSE,
+  * MAE,
+  * MAPE,
+  * MASE.
+
+```{r tabela.zagłada.ostateczna, tab.cap="\\label{fig:tabela.zagłada.ostateczna}Tabela przedstawiająca zestawienie dokładności prognoz dla zbioru testowego na podstawie wybranych miar oceny dokładności: RMSE, MAE, MAPE i MASE."}
+RMSE.cast <- c(arima.cast[[4]], regresja.cast[[4]], exp.cast[[4]], sez.cast[[4]])
+MAE.cast <- c(arima.cast[[6]], regresja.cast[[6]], exp.cast[[6]], sez.cast[[6]])
+MAPE.cast <- c(arima.cast[[10]], regresja.cast[[10]], exp.cast[[10]], sez.cast[[10]])
+MASE.cast <- c(arima.cast[[12]], regresja.cast[[12]], exp.cast[[12]], sez.cast[[12]])
+
+tabela.cast <- data.frame(Model = c("SARIMA", "Dekompozycja", "Holt-Winters", "Sezonowa naiwna"),
+                          RMSE = RMSE.cast,
+                          MAE = MAE.cast,
+                          MAPE = MAPE.cast,
+                          MASE = MASE.cast)
+
+kable(tabela.cast)
+```
+
+Jak widać w tabeli \ref{fig:tabela.zagłada.ostateczna} model SARIMA okazał się bezkonkurencyjny - osiągnął najniższe wartości dla wszystkich analizowanych tu miar dokładności. Jako jedyny ma średni błąd bezwględnego skalowanego (MASE) mniejszy od $1$, co oznacza, że tylko on jest lepszy od standardowej metody naiwej. Niedaleko tej wartości był model oparty na algorytmie Holta-Wintersa, jednak nawet on nie podołał nagłej zmianie trendu w zbiorze testowym. Dwa pozostałe modele przyjmują już wartości kilkukrotnie większe dla wszystkich przedstawionych miar dokładności.
+
+Podsumowując, model SARIMA$(0, 1, 4)(0, 1, 0)_{4}$ z parametrem $\lambda = `r lambda`$ okazał się najlepszy do prognozowania danych `euretail`.
+
+
+
+# Źródła
+
+  * https://pl.wikipedia.org/wiki/Globalny_kryzys_finansowy
+  
+
