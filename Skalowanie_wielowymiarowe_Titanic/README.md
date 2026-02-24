@@ -18,8 +18,9 @@ Wizualizacja MDS wyraźnie wyodrębniła skupiska pasażerów ze względu na pł
 
 ## Uwagi techniczne
 Ze względu na ograniczenia rozmiaru plików platformy GitHub raport został podzielony na dwie części:
-  * **[Titanic_raport.pdf](./Titanic_raport.pdf)** – analiza merytoryczna, eksploracja danych oraz wyniki MDS w wysokiej rozdzielczości,
-  * **[Titanic_shepard.pdf](./Titanic_shepard.pdf)** – diagram Sheparda wraz z komentarzem (ze względu na bardzo duży rozmiar, plik został poddany kompresji).
+  * **[Titanic_1.pdf](./Titanic_1.pdf)** – cel analizy oraz odpowiednie przygotowanie danych do dalszej analizy,
+  * **[Titanic_2.pdf](./Titanic_2.pdf)** – redukcja wymiarowości (MDS) oraz diagram Sheparda wraz z komentarzem (ze względu na bardzo duży rozmiar, plik został skompresowany),
+  * **[Titanic_3.pdf](./Titanic_3.pdf)** – wizualizacja wyników MDS wraz z komentarzem i wnioskami cząstkowymi.
 
-Pełny, nieskompresowany raport można wygenerować lokalnie, uruchamiając plik `Titanic.Rmd`.
+Pełny, nieskompresowany raport można wygenerować, uruchamiając plik `Titanic.Rmd` np. w RStudio.
 
