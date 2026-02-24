@@ -30,7 +30,7 @@ W tym repozytorium znajdują się moje projekty zrealizowane podczas studiów, s
 * **Cel:** Porównanie dokładności prognoz kwartalnego indeksu handlu detalicznego strefy euro w obliczu kryzysu finansowego 2008.
 * **Języki programowania i narzędzia:** R, R Markdown. 
 * **Główne metody:** SARIMA, algorytmy wygładzania wykładniczego (Holt-Winters), modele dekompozycji z trendem sześciennym.
-* **[Kod i raport](./Porównanie_dokładności_prognoz_dla_danych_euretail.Rmd)**
+* **[Kod i raport](./Porównanie_dokładności_prognoz)**
 
 ### 5. Sprawozdania z arkuszy kalkulacyjnych
 * **Opis:** Wykorzystanie Excela do zaawansowanych obliczeń statystycznych i automatyzacji raportowania danych.
