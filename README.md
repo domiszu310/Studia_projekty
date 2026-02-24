@@ -6,7 +6,7 @@ W tym repozytorium znajdują się moje projekty zrealizowane podczas studiów, s
 
 ## Spis projektów
 
-### 1. Porównanie metod klasyfikacji (zbioru `Glass `)
+### 1. Porównanie metod klasyfikacji (zbioru `Glass`)
 * **Opis:** Kompleksowa analiza skuteczności algorytmów klasyfikacyjnych (klasycznych i zaawansowanych) w rozpoznawaniu typów szkła.
 * **Języki programowania i narzędzia:** R, R Markdown. 
 * **Charakter:** Projekt zespołowy (współautor: Wiktoria Jarząb)
