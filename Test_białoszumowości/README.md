@@ -1,7 +1,5 @@
 # Analiza białoszumowości i symulacje testów statystycznych w szeregach czasowych
 
-## Weryfikacja autokorelacji szeregów czasowych w języku R
-
 ## Cel projektu
 Głównym celem projektu było zbadanie skuteczności metod weryfikacji hipotezy o białoszumowości szeregów czasowych. Analiza skupia się na porównaniu czułości podejścia graficznego oraz formalnych testów statystycznych w wykrywaniu zależności w danych.
 
