@@ -20,4 +20,5 @@ Wizualizacja MDS wyraźnie wyodrębniła skupiska pasażerów ze względu na pł
 * **Raport PDF**: Ze względu na rozmiar diagramu Sheparda plik przekroczył dopuszczalny limit rozmiaru przysyłanych plików na GitHubie i został podzielony na dwie części:
     * `Titanic_1.pdf`
     * `Titanic_2.pdf`
+      
 Pełny raport można odtworzyć samodzielnie, uruchamiając dołączony plik `Titanic.Rmd` w środowisku RStudio.
