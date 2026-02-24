@@ -1,4 +1,5 @@
-# Projekty zrealizowane na Politechnice Wrocławskiej | kierunek: Matematyka, specjalizacja: uczenie maszynowe i inżynieria danych
+# Zrealizowane projekty
+Politechnika Wrocławska | kierunek: Matematyka | specjalizacja: uczenie maszynowe i inżynieria danych
 
 W tym repozytorium znajdują się moje projekty zrealizowane podczas studiów, skupiające się na eksploracji danych i analizie szeregów czasowych.
 
