@@ -12,7 +12,7 @@ W tym repozytorium odpowiadam na pytania:
 
 ## Technologie
 * **Środowisko:** Google Colab
-* **Analiza i Wizualizacja Danych:** R w ipyhn (ggplot2, dplyr, tidyr)
+* **Analiza i Wizualizacja Danych:** R w ipynb (ggplot2, dplyr, tidyr)
 
 ## Struktura repozytorium
 * `analiza_kompromisu_BERT.ipynb` - analizę kosztów vs jakości na różnego rodzaju wykresach m.in. wykresach rozrzutu.
