@@ -1,4 +1,4 @@
-# Optymalizacja modeli BERT – Analiza Kompromisu
+# Analiza Kompromisu - optymalizacja modeli BERT
 
 Ten projekt stanowi mój indywidualny wkład analityczny w ramach szerszego projektu grupowego dotyczącego fine-tuningu modelu BERT. Repozytorium zawiera raport z badań nad wyborem optymalnych modeli z uwzględnieniem kompromisu między dokładnością a zużyciem zasobów obliczeniowych.
 
