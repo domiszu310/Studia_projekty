@@ -11,7 +11,7 @@ W tym repozytorium znajdują się moje projekty zrealizowane podczas studiów, s
 * **Opis:** Kompleksowa analiza kompromisu między dokładnością dopasowania modelu BERT a jego kosztem obliczeniowym (czas treningu, zużycie VRAM).
 * **Języki programowania i narzędzia:** R, Python (Jupiter Notebook), Google Colab. 
 * **Charakter:** Projekt zespołowy (część indywidualna)
-* **[Raport](./Fine-tuning_BERT)**
+* **[Raport](./Fine-tuning%20BERT)**
 
 ### 2. Porównanie metod klasyfikacji (zbioru `Glass`)
 * **Opis:** Kompleksowa analiza skuteczności algorytmów klasyfikacyjnych (klasycznych i zaawansowanych) w rozpoznawaniu typów szkła.
