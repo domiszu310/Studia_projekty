@@ -15,6 +15,7 @@ W tym repozytorium odpowiadam na pytania:
 * **Analiza i Wizualizacja Danych:** R w ipynb (ggplot2, dplyr, tidyr)
 
 ## Struktura repozytorium
+* `Opisy baz danych.docx` - charakterystyka baz danych wykorzystanych w projekcie.
 * `Analiza kompromisu.ipynb` - analizę kosztów vs jakości na różnego rodzaju wykresach m.in. wykresach rozrzutu.
 * `analiza_epok_LSTM.ipynb` - wykresy i wnioski dotyczące doboru optymalnej liczby epok dla sieci LSTM.
 
