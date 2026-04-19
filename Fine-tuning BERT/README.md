@@ -10,8 +10,8 @@ W tym repozytorium odpowiadam na pytania:
 * Jakie jest rzeczywiste zużycie zasobów (VRAM GPU, RAM, czas treningu) dla poszczególnych konfiguracji?
 
 ## Technologie
-* **Środowisko:** Google Colab
-* **Analiza i Wizualizacja Danych:** R w ipynb (ggplot2, dplyr, tidyr)
+* **Środowisko:** Google Colab, Jupiter Notebook
+* **Analiza i Wizualizacja Danych:** R (ggplot2, dplyr, tidyr)
 
 ## Struktura repozytorium
 * `Opisy baz danych.docx` - charakterystyka baz danych wykorzystanych w projekcie.
